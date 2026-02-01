@@ -22,6 +22,7 @@ import {
 } from '../api/client';
 import type { DownloadTask } from '../store/useAppStore';
 
+1
 const VIDEO_FORMATS = ['mp4', 'mkv', 'webm', 'avi'] as const;
 const AUDIO_FORMATS = ['mp3', 'wav', 'flac', 'aac', 'opus'] as const;
 const VIDEO_QUALITIES = ['best', '1080', '720', '480', '360'] as const;
