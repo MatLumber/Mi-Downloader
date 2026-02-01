@@ -13,6 +13,8 @@ jobs:
   tag:
     if: ${{ github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release)') }}
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,3 +53,64 @@ jobs:
           git commit -m "chore(release): v${{ steps.bump.outputs.version }} [skip ci]"
           git tag v${{ steps.bump.outputs.version }}
           git push origin HEAD:${{ github.ref_name }} --tags
+
+  build-release:
+    needs: tag
+    if: ${{ needs.tag.outputs.version != '' }}
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+      ELECTRON_BUILDER_SKIP_WIN_CODESIGN: true
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: v${{ needs.tag.outputs.version }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pyinstaller
+
+      - name: Download ffmpeg
+        shell: powershell
+        run: |
+          $zip = "$env:RUNNER_TEMP\ffmpeg.zip"
+          $dest = "$env:RUNNER_TEMP\ffmpeg"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $ffmpeg = Get-ChildItem -Path $dest -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem -Path $dest -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Path backend\ffmpeg -Force | Out-Null
+          Copy-Item $ffmpeg.FullName backend\ffmpeg\ffmpeg.exe -Force
+          Copy-Item $ffprobe.FullName backend\ffmpeg\ffprobe.exe -Force
+
+      - name: Build backend
+        working-directory: backend
+        run: |
+          pyinstaller --clean --noconfirm gravitydown.spec
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Build and publish release
+        working-directory: frontend
+        run: npx electron-builder --win --x64 --publish=always
