@@ -82,6 +82,7 @@ jobs:
 
       - name: Validate latest.yml assets
         working-directory: frontend
+        shell: bash
         run: |
           node - <<'NODE'
           const fs = require('fs');
