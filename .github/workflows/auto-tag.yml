@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - master
 
 permissions:
   contents: write
@@ -49,4 +50,4 @@ jobs:
           fi
           git commit -m "chore(release): v${{ steps.bump.outputs.version }} [skip ci]"
           git tag v${{ steps.bump.outputs.version }}
-          git push origin HEAD:main --tags
+          git push origin HEAD:${{ github.ref_name }} --tags
