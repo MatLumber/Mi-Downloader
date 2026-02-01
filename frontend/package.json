@@ -17,6 +17,7 @@
   "build": {
     "appId": "com.gravitydown.app",
     "productName": "GravityDown",
+    "artifactName": "${productName}-${version}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -50,7 +51,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "files": [
       "dist/**/*",

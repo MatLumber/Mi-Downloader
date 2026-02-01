@@ -119,6 +119,49 @@ jobs:
         working-directory: frontend
         run: npx electron-builder --win --x64 --publish=never
 
+      - name: Validate latest.yml assets
+        working-directory: frontend
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const releaseDir = path.resolve('release');
+          const latestPath = path.join(releaseDir, 'latest.yml');
+
+          if (!fs.existsSync(latestPath)) {
+            console.error(`latest.yml not found at ${latestPath}`);
+            process.exit(1);
+          }
+
+          const content = fs.readFileSync(latestPath, 'utf8');
+          const urls = [];
+          const pathMatch = content.match(/^path:\s*(.+)\s*$/m);
+          if (pathMatch) {
+            urls.push(pathMatch[1].trim());
+          }
+
+          const urlRegex = /^\s*-\s*url:\s*(.+)\s*$/gm;
+          let match;
+          while ((match = urlRegex.exec(content)) !== null) {
+            urls.push(match[1].trim());
+          }
+
+          const unique = Array.from(new Set(urls)).filter(Boolean);
+          if (unique.length === 0) {
+            console.error('No assets referenced in latest.yml');
+            process.exit(1);
+          }
+
+          const missing = unique.filter((file) => !fs.existsSync(path.join(releaseDir, file)));
+          if (missing.length) {
+            console.error(`Missing assets referenced by latest.yml: ${missing.join(', ')}`);
+            process.exit(1);
+          }
+
+          console.log(`latest.yml assets exist: ${unique.join(', ')}`);
+          NODE
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
