@@ -307,10 +307,10 @@ function DownloaderView() {
                                         <span className="font-mono">
                                             {(videoInfo.duration || 0) > 0 ? `${Math.floor((videoInfo.duration || 0) / 60)}:${((videoInfo.duration || 0) % 60).toString().padStart(2, '0')}` : '--:--'}
                                         </span>
-                                <div className="tag-pill md:ml-auto flex items-center gap-2 shrink-0">
-                                    {getPlatformIcon(videoInfo.platform, 14)}
-                                    <span className="uppercase text-xs font-medium text-zinc-300">{videoInfo.platform}</span>
-                                </div>
+                                        <div className="tag-pill md:ml-auto flex items-center gap-2 shrink-0">
+                                            {getPlatformIcon(videoInfo.platform, 14)}
+                                            <span className="uppercase text-xs font-medium text-zinc-300">{videoInfo.platform}</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -319,72 +319,72 @@ function DownloaderView() {
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-7">
                                 {/* Left Column - Format Options */}
                                 <div className="soft-card p-7">
-                                {/* Video/Audio Toggle */}
-                                <div className="segmented-control mb-6">
-                                    <button
-                                        onClick={() => setFormatType('video')}
-                                        className={`segment-item ${formatType === 'video' ? 'active' : ''}`}
-                                    >
-                                        Video
-                                    </button>
-                                    <button
-                                        onClick={() => setFormatType('audio')}
-                                        className={`segment-item ${formatType === 'audio' ? 'active' : ''}`}
-                                    >
-                                        Audio
-                                    </button>
+                                    {/* Video/Audio Toggle */}
+                                    <div className="segmented-control mb-6">
+                                        <button
+                                            onClick={() => setFormatType('video')}
+                                            className={`segment-item ${formatType === 'video' ? 'active' : ''}`}
+                                        >
+                                            Video
+                                        </button>
+                                        <button
+                                            onClick={() => setFormatType('audio')}
+                                            className={`segment-item ${formatType === 'audio' ? 'active' : ''}`}
+                                        >
+                                            Audio
+                                        </button>
+                                    </div>
+
+                                    {formatType === 'video' ? (
+                                        <div className="space-y-5">
+                                            <div>
+                                                <label className="block text-sm text-zinc-400 font-medium mb-2">Calidad</label>
+                                                <select
+                                                    value={quality}
+                                                    onChange={(e) => setQuality(e.target.value)}
+                                                    className="w-full h-11 px-4 rounded-lg bg-zinc-900/70 border border-white/10 text-white focus:outline-none focus:border-cyan-400/60"
+                                                >
+                                                    {VIDEO_QUALITIES.map(q => <option key={q} value={q}>{q === 'best' ? 'Mejor disponible' : `${q}p`}</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm text-zinc-400 font-medium mb-2">Formato</label>
+                                                <select
+                                                    value={videoFormat}
+                                                    onChange={(e) => setVideoFormat(e.target.value as any)}
+                                                    className="w-full h-11 px-4 rounded-lg bg-zinc-900/70 border border-white/10 text-white focus:outline-none focus:border-cyan-400/60"
+                                                >
+                                                    {VIDEO_FORMATS.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-5">
+                                            <div>
+                                                <label className="block text-sm text-zinc-400 font-medium mb-2">Calidad</label>
+                                                <select
+                                                    value={audioQuality}
+                                                    onChange={(e) => setAudioQuality(e.target.value as any)}
+                                                    className="w-full h-11 px-4 rounded-lg bg-zinc-900/70 border border-white/10 text-white focus:outline-none focus:border-cyan-400/60"
+                                                >
+                                                    {AUDIO_BITRATES.map(b => <option key={b} value={b}>{b} kbps</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm text-zinc-400 font-medium mb-2">Formato</label>
+                                                <select
+                                                    value={audioFormat}
+                                                    onChange={(e) => setAudioFormat(e.target.value as any)}
+                                                    className="w-full h-11 px-4 rounded-lg bg-zinc-900/70 border border-white/10 text-white focus:outline-none focus:border-cyan-400/60"
+                                                >
+                                                    {AUDIO_FORMATS.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
-                                {formatType === 'video' ? (
-                                    <div className="space-y-5">
-                                        <div>
-                                            <label className="block text-sm text-zinc-400 font-medium mb-2">Calidad</label>
-                                            <select
-                                                value={quality}
-                                                onChange={(e) => setQuality(e.target.value)}
-                                                className="w-full h-11 px-4 rounded-lg bg-zinc-900/70 border border-white/10 text-white focus:outline-none focus:border-cyan-400/60"
-                                            >
-                                                {VIDEO_QUALITIES.map(q => <option key={q} value={q}>{q === 'best' ? 'Mejor disponible' : `${q}p`}</option>)}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm text-zinc-400 font-medium mb-2">Formato</label>
-                                            <select
-                                                value={videoFormat}
-                                                onChange={(e) => setVideoFormat(e.target.value as any)}
-                                                className="w-full h-11 px-4 rounded-lg bg-zinc-900/70 border border-white/10 text-white focus:outline-none focus:border-cyan-400/60"
-                                            >
-                                                {VIDEO_FORMATS.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
-                                            </select>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-5">
-                                        <div>
-                                            <label className="block text-sm text-zinc-400 font-medium mb-2">Calidad</label>
-                                            <select
-                                                value={audioQuality}
-                                                onChange={(e) => setAudioQuality(e.target.value as any)}
-                                                className="w-full h-11 px-4 rounded-lg bg-zinc-900/70 border border-white/10 text-white focus:outline-none focus:border-cyan-400/60"
-                                            >
-                                                {AUDIO_BITRATES.map(b => <option key={b} value={b}>{b} kbps</option>)}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm text-zinc-400 font-medium mb-2">Formato</label>
-                                            <select
-                                                value={audioFormat}
-                                                onChange={(e) => setAudioFormat(e.target.value as any)}
-                                                className="w-full h-11 px-4 rounded-lg bg-zinc-900/70 border border-white/10 text-white focus:outline-none focus:border-cyan-400/60"
-                                            >
-                                                {AUDIO_FORMATS.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
-                                            </select>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Right Column - Destination & Download */}
+                                {/* Right Column - Destination & Download */}
                                 {/* Right Column - Destination & Download */}
                                 <div className="flex flex-col gap-6">
                                     <div className="soft-card flex-1 p-7">
@@ -893,42 +893,42 @@ function CompressorView() {
                                 className="range-input"
                                 disabled={isCompressing}
                             />
-                        <div className="range-labels">
-                            {presetOptions.map((option) => (
-                                <button
-                                    key={option.id}
-                                    type="button"
+                            <div className="range-labels">
+                                {presetOptions.map((option) => (
+                                    <button
+                                        key={option.id}
+                                        type="button"
                                         onClick={() => {
                                             setPreset(option.id);
                                             setCompressionPreset(option.id);
                                         }}
-                                    className={`range-pill ${preset === option.id ? 'active' : ''}`}
-                                    disabled={isCompressing}
-                                >
-                                    <span>{option.label}</span>
-                                    <small>{option.description}</small>
-                                </button>
-                            ))}
+                                        className={`range-pill ${preset === option.id ? 'active' : ''}`}
+                                        disabled={isCompressing}
+                                    >
+                                        <span>{option.label}</span>
+                                        <small>{option.description}</small>
+                                    </button>
+                                ))}
+                            </div>
+                            {dropWarning && (
+                                <div className="compress-warning">
+                                    {dropWarning}
+                                </div>
+                            )}
+                            {inputSize && (
+                                <div className="compress-estimate">
+                                    <span>Estimado:</span>
+                                    <strong>{formatBytes(inputSize)}</strong>
+                                    <span>→</span>
+                                    <strong>{formatBytes(estimateSize() || 0)}</strong>
+                                </div>
+                            )}
+                            {inputSize && estimateSize() && estimateSize()! >= inputSize && (
+                                <div className="compress-warning">
+                                    Este archivo ya esta muy comprimido. El resultado puede pesar mas.
+                                </div>
+                            )}
                         </div>
-                        {dropWarning && (
-                            <div className="compress-warning">
-                                {dropWarning}
-                            </div>
-                        )}
-                        {inputSize && (
-                            <div className="compress-estimate">
-                                <span>Estimado:</span>
-                                <strong>{formatBytes(inputSize)}</strong>
-                                <span>→</span>
-                                <strong>{formatBytes(estimateSize() || 0)}</strong>
-                            </div>
-                        )}
-                        {inputSize && estimateSize() && estimateSize()! >= inputSize && (
-                            <div className="compress-warning">
-                                Este archivo ya esta muy comprimido. El resultado puede pesar mas.
-                            </div>
-                        )}
-                    </div>
                     </div>
 
                     <div className="compress-card span-full">
@@ -1212,7 +1212,7 @@ function ConvertView() {
                             </div>
                             <div className="file-text">
                                 <span className="file-name">{getFileName(videoInput)}</span>
-                            <span className="file-path">{videoInput || 'MP4, MKV, WEBM, MOV, AVI, M4V'}</span>
+                                <span className="file-path">{videoInput || 'MP4, MKV, WEBM, MOV, AVI, M4V'}</span>
                             </div>
                             <span className="file-action">Elegir</span>
                         </button>
@@ -1284,7 +1284,7 @@ function ConvertView() {
                             </div>
                             <div className="file-text">
                                 <span className="file-name">{getFileName(audioInput)}</span>
-                            <span className="file-path">{audioInput || 'MP3, AAC, WAV, FLAC, OGG, OPUS, M4A'}</span>
+                                <span className="file-path">{audioInput || 'MP3, AAC, WAV, FLAC, OGG, OPUS, M4A'}</span>
                             </div>
                             <span className="file-action">Elegir</span>
                         </button>
@@ -1356,7 +1356,7 @@ function ConvertView() {
                             </div>
                             <div className="file-text">
                                 <span className="file-name">{getFileName(imageInput)}</span>
-                            <span className="file-path">{imageInput || 'PNG, JPG, WEBP, BMP, TIFF'}</span>
+                                <span className="file-path">{imageInput || 'PNG, JPG, WEBP, BMP, TIFF'}</span>
                             </div>
                             <span className="file-action">Elegir</span>
                         </button>
