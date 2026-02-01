@@ -260,6 +260,8 @@ ipcMain.on('file-drop', (_, filePath) => {
   }
 });
 
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 ipcMain.handle('stat-file', async (_, filePath) => {
   try {
     const stats = fs.statSync(filePath);

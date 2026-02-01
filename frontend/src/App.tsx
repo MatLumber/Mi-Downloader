@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Heart } from 'lucide-react';
 import { TitleBar } from './components/TitleBar';
 import { MainPanel } from './components/MainPanel';
@@ -7,6 +7,7 @@ import { checkApiHealth } from './api/client';
 
 function App() {
   const { setApiOnline } = useAppStore();
+  const [appVersion, setAppVersion] = useState<string>('');
 
   // Check API health on mount and periodically
   useEffect(() => {
@@ -19,6 +20,25 @@ function App() {
     const interval = setInterval(checkHealth, 5000);
     return () => clearInterval(interval);
   }, [setApiOnline]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadVersion = async () => {
+      try {
+        const version = await window.electronAPI?.getAppVersion?.();
+        if (mounted && version) {
+          setAppVersion(version);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    loadVersion();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <div className="app-shell">
@@ -47,6 +67,9 @@ function App() {
         <span className="flex items-center gap-2">
           Creado con <Heart size={14} className="text-rose-400" /> por Mati
         </span>
+        {appVersion && (
+          <span className="app-version">v{appVersion}</span>
+        )}
       </footer>
     </div>
   );

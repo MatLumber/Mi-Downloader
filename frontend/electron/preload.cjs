@@ -16,4 +16,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     selectFile: (kind) => ipcRenderer.invoke('select-file', kind),
     onFileDrop: (callback) => ipcRenderer.on('file-drop', (_, path) => callback(path)),
     statFile: (path) => ipcRenderer.invoke('stat-file', path),
+    getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 });

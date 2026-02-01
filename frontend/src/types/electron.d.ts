@@ -8,6 +8,7 @@ interface ElectronAPI {
     selectFile: (kind?: 'video' | 'audio' | 'image' | 'any') => Promise<string | null>;
     onFileDrop: (callback: (path: string) => void) => void;
     statFile: (path: string) => Promise<{ size: number } | null>;
+    getAppVersion: () => Promise<string>;
     openPath: (path: string) => void;
     showItemInFolder: (path: string) => void;
 }
