@@ -1,0 +1,52 @@
+name: Auto Tag
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: ${{ github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release)') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Bump version
+        id: bump
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = 'frontend/package.json';
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const [maj, min, pat] = pkg.version.split('.').map(Number);
+          const next = `${maj}.${min}.${pat + 1}`;
+          pkg.version = next;
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2));
+          fs.writeFileSync('version.txt', next);
+          NODE
+          echo "version=$(cat version.txt)" >> $GITHUB_OUTPUT
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add frontend/package.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "chore(release): v${{ steps.bump.outputs.version }} [skip ci]"
+          git tag v${{ steps.bump.outputs.version }}
+          git push origin HEAD:main --tags

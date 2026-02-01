@@ -1,4 +1,6 @@
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
+const log = require('electron-log');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -8,6 +10,31 @@ let mainWindow;
 let pythonProcess;
 
 const isDev = !app.isPackaged;
+
+function setupAutoUpdater() {
+  if (isDev) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = log;
+  log.transports.file.level = 'info';
+
+  autoUpdater.on('error', (error) => {
+    log.error(`[Updater] ${error?.message || error}`);
+    if (mainWindow) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'Actualizacion fallida',
+        message: 'No se pudo completar la actualizacion automaticamente.',
+        detail: String(error?.message || error),
+      });
+    }
+  });
+
+  autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+    log.error(`[Updater] ${error?.message || error}`);
+  });
+}
 
 const backendLogPath = () => path.join(app.getPath('userData'), 'backend.log');
 
@@ -247,6 +274,7 @@ app.whenReady().then(() => {
   
   // Wait for backend to start
   setTimeout(createWindow, 2000);
+  setupAutoUpdater();
 
   waitForBackend().then((ready) => {
     if (!ready) {
