@@ -17,4 +17,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onFileDrop: (callback) => ipcRenderer.on('file-drop', (_, path) => callback(path)),
     statFile: (path) => ipcRenderer.invoke('stat-file', path),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    onUpdateStatus: (callback) => {
+      const listener = (_, payload) => callback(payload);
+      ipcRenderer.on('update-status', listener);
+      return () => ipcRenderer.removeListener('update-status', listener);
+    },
 });

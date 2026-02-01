@@ -9,6 +9,7 @@ interface ElectronAPI {
     onFileDrop: (callback: (path: string) => void) => void;
     statFile: (path: string) => Promise<{ size: number } | null>;
     getAppVersion: () => Promise<string>;
+    onUpdateStatus: (callback: (payload: { status: string; version?: string; percent?: number; message?: string }) => void) => (() => void) | void;
     openPath: (path: string) => void;
     showItemInFolder: (path: string) => void;
 }

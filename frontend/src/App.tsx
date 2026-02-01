@@ -8,6 +8,7 @@ import { checkApiHealth } from './api/client';
 function App() {
   const { setApiOnline } = useAppStore();
   const [appVersion, setAppVersion] = useState<string>('');
+  const [updateStatus, setUpdateStatus] = useState<string>('');
 
   // Check API health on mount and periodically
   useEffect(() => {
@@ -40,6 +41,27 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onUpdateStatus?.((payload) => {
+      if (!payload) return;
+      if (payload.status === 'downloaded') {
+        setUpdateStatus(`Actualizacion descargada (${payload.version}). Se reiniciara en segundos...`);
+      } else if (payload.status === 'downloading') {
+        setUpdateStatus(`Descargando actualizacion... ${Math.round(payload.percent || 0)}%`);
+      } else if (payload.status === 'available') {
+        setUpdateStatus(`Nueva version disponible (${payload.version}). Descargando...`);
+      } else if (payload.status === 'error') {
+        setUpdateStatus('No se pudo actualizar automaticamente.');
+      } else {
+        setUpdateStatus('');
+      }
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, []);
+
   return (
     <div className="app-shell">
       {/* Ambient Glow Effect */}
@@ -52,6 +74,12 @@ function App() {
       <main className="app-main">
         <MainPanel />
       </main>
+
+      {updateStatus && (
+        <div className="update-banner">
+          {updateStatus}
+        </div>
+      )}
 
       {/* Status Bar */}
       <footer

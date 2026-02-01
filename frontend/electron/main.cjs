@@ -19,19 +19,46 @@ function setupAutoUpdater() {
   autoUpdater.logger = log;
   log.transports.file.level = 'info';
 
-  autoUpdater.on('error', (error) => {
-    log.error(`[Updater] ${error?.message || error}`);
+  const notifyRenderer = (payload) => {
     if (mainWindow) {
-      dialog.showMessageBox(mainWindow, {
-        type: 'error',
-        title: 'Actualizacion fallida',
-        message: 'No se pudo completar la actualizacion automaticamente.',
-        detail: String(error?.message || error),
-      });
+      mainWindow.webContents.send('update-status', payload);
     }
+  };
+
+  autoUpdater.on('checking-for-update', () => {
+    log.info('[Updater] Checking for updates...');
+    notifyRenderer({ status: 'checking' });
   });
 
-  autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+  autoUpdater.on('update-available', (info) => {
+    log.info(`[Updater] Update available: ${info?.version || ''}`);
+    notifyRenderer({ status: 'available', version: info?.version || '' });
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    log.info(`[Updater] No updates: ${info?.version || ''}`);
+    notifyRenderer({ status: 'idle' });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    log.info(`[Updater] Download ${progress.percent?.toFixed(1)}%`);
+    notifyRenderer({ status: 'downloading', percent: progress.percent || 0 });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    log.info('[Updater] Update downloaded. Installing...');
+    notifyRenderer({ status: 'downloaded', version: info?.version || '' });
+    setTimeout(() => {
+      autoUpdater.quitAndInstall(true, true);
+    }, 2500);
+  });
+
+  autoUpdater.on('error', (error) => {
+    log.error(`[Updater] ${error?.message || error}`);
+    notifyRenderer({ status: 'error', message: String(error?.message || error) });
+  });
+
+  autoUpdater.checkForUpdates().catch((error) => {
     log.error(`[Updater] ${error?.message || error}`);
   });
 }
