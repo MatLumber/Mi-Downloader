@@ -125,6 +125,9 @@ jobs:
           tag_name: v${{ needs.tag.outputs.version }}
           name: v${{ needs.tag.outputs.version }}
           generate_release_notes: true
+          draft: false
+          prerelease: false
+          make_latest: true
           files: |
             frontend/release/*.exe
             frontend/release/*.yml
