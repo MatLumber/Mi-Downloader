@@ -54,6 +54,7 @@ const resolveThumbnail = (thumbnail: string | null, platform?: string) => {
 };
 
 
+
 export function MainPanel() {
     const { activeTab, setActiveTab } = useAppStore();
 
