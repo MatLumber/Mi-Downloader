@@ -1,0 +1,28 @@
+directories:
+  output: release
+  buildResources: build
+appId: com.gravitydown.app
+productName: GravityDown
+extraResources:
+  - from: ../backend/dist/gravitydown-engine.exe
+    to: backend/gravitydown-engine.exe
+  - from: ../backend/ffmpeg
+    to: ffmpeg
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+    - target: nsis
+      arch:
+        - x64
+  icon: public/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+files:
+  - filter:
+      - dist/**/*
+      - electron/**/*
+electronVersion: 40.1.0

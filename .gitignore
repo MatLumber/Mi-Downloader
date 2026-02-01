@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+backend/venv/
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+*.exe
+*.dmg
+*.apk
+
+# Environment variables
+.env
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Agent/AI tools
+.agent/
+.agents/
+.claude/
+.openclaude/
+.opencode/
+.gemini/
