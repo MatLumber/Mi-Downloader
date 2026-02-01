@@ -14,6 +14,12 @@ const isDev = !app.isPackaged;
 function setupAutoUpdater() {
   if (isDev) return;
 
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'MatLumber',
+    repo: 'Mi-Downloader',
+    private: false,
+  });
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = log;
@@ -27,26 +33,31 @@ function setupAutoUpdater() {
 
   autoUpdater.on('checking-for-update', () => {
     log.info('[Updater] Checking for updates...');
+    appendUpdaterLog('Checking for updates');
     notifyRenderer({ status: 'checking' });
   });
 
   autoUpdater.on('update-available', (info) => {
     log.info(`[Updater] Update available: ${info?.version || ''}`);
+    appendUpdaterLog(`Update available: ${info?.version || ''}`);
     notifyRenderer({ status: 'available', version: info?.version || '' });
   });
 
   autoUpdater.on('update-not-available', (info) => {
     log.info(`[Updater] No updates: ${info?.version || ''}`);
+    appendUpdaterLog(`No updates: ${info?.version || ''}`);
     notifyRenderer({ status: 'idle' });
   });
 
   autoUpdater.on('download-progress', (progress) => {
     log.info(`[Updater] Download ${progress.percent?.toFixed(1)}%`);
+    appendUpdaterLog(`Download ${progress.percent?.toFixed(1)}%`);
     notifyRenderer({ status: 'downloading', percent: progress.percent || 0 });
   });
 
   autoUpdater.on('update-downloaded', (info) => {
     log.info('[Updater] Update downloaded. Installing...');
+    appendUpdaterLog(`Update downloaded: ${info?.version || ''}`);
     notifyRenderer({ status: 'downloaded', version: info?.version || '' });
     setTimeout(() => {
       autoUpdater.quitAndInstall(true, true);
@@ -55,15 +66,20 @@ function setupAutoUpdater() {
 
   autoUpdater.on('error', (error) => {
     log.error(`[Updater] ${error?.message || error}`);
+    appendUpdaterLog(`Error: ${error?.message || error}`);
     notifyRenderer({ status: 'error', message: String(error?.message || error) });
   });
 
-  autoUpdater.checkForUpdates().catch((error) => {
-    log.error(`[Updater] ${error?.message || error}`);
-  });
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((error) => {
+      log.error(`[Updater] ${error?.message || error}`);
+      appendUpdaterLog(`Check failed: ${error?.message || error}`);
+    });
+  }, 2000);
 }
 
 const backendLogPath = () => path.join(app.getPath('userData'), 'backend.log');
+const updaterLogPath = () => path.join(app.getPath('userData'), 'logs', 'updater.log');
 
 function appendBackendLog(message) {
   const line = `[${new Date().toISOString()}] ${message}\n`;
@@ -71,6 +87,16 @@ function appendBackendLog(message) {
     fs.appendFileSync(backendLogPath(), line);
   } catch (error) {
     console.log('[Backend] Failed to write log:', error.message);
+  }
+}
+
+function appendUpdaterLog(message) {
+  try {
+    const logPath = updaterLogPath();
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`);
+  } catch (error) {
+    console.log('[Updater] Failed to write log:', error.message);
   }
 }
 
@@ -302,8 +328,10 @@ app.whenReady().then(() => {
   startPythonBackend();
   
   // Wait for backend to start
-  setTimeout(createWindow, 2000);
-  setupAutoUpdater();
+  setTimeout(() => {
+    createWindow();
+    setupAutoUpdater();
+  }, 2000);
 
   waitForBackend().then((ready) => {
     if (!ready) {
