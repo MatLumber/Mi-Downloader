@@ -6,6 +6,8 @@ Wraps yt-dlp for threaded downloads with progress callbacks.
 import os
 import uuid
 import re
+import sys
+import shutil
 from urllib.parse import urlparse
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -93,6 +95,27 @@ class DownloadManager:
             return f"{minutes}m {seconds}s"
         else:
             return f"{seconds}s"
+
+    def _find_binary(self, binary_name: str, env_key: str) -> Optional[str]:
+        env_path = os.environ.get(env_key)
+        if env_path and os.path.isfile(env_path):
+            return env_path
+
+        candidates = []
+        base_dir = getattr(sys, "_MEIPASS", None)
+        if base_dir:
+            candidates.append(os.path.join(base_dir, binary_name))
+        candidates.append(os.path.join(os.getcwd(), binary_name))
+        candidates.append(os.path.join(os.path.dirname(__file__), binary_name))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), binary_name))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), "ffmpeg", binary_name))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), "..", "ffmpeg", binary_name))
+
+        for path in candidates:
+            if os.path.isfile(path):
+                return path
+
+        return shutil.which(binary_name)
 
     def _normalize_url(self, url: str) -> str:
         """Ensure URL has a scheme for proper extractor selection."""
@@ -335,6 +358,9 @@ class DownloadManager:
             # Use explicit filename template with our pre-sanitized title
             outtmpl = os.path.join(target_dir, f"{safe_title}.%(ext)s")
 
+            ffmpeg_path = self._find_binary("ffmpeg.exe", "FFMPEG_PATH") or self._find_binary("ffmpeg", "FFMPEG_PATH")
+            ffmpeg_location = os.path.dirname(ffmpeg_path) if ffmpeg_path else None
+
             ydl_opts = {
                 "format": format_selector,
                 "outtmpl": outtmpl,
@@ -346,6 +372,9 @@ class DownloadManager:
                 # We handle sanitization manually via explicit outtmpl
                 "restrictfilenames": False, 
             }
+
+            if ffmpeg_location:
+                ydl_opts["ffmpeg_location"] = ffmpeg_location
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
