@@ -5,7 +5,7 @@ interface ElectronAPI {
     maximize: () => void;
     close: () => void;
     selectDirectory: () => Promise<string | null>;
-    selectFile: (kind?: 'video' | 'audio' | 'image' | 'any') => Promise<string | null>;
+    selectFile: (kind?: 'video' | 'audio' | 'media' | 'image' | 'any') => Promise<string | null>;
     onFileDrop: (callback: (path: string) => void) => void;
     statFile: (path: string) => Promise<{ size: number } | null>;
     getAppVersion: () => Promise<string>;

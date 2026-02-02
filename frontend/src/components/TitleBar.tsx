@@ -1,12 +1,17 @@
 import { motion } from 'framer-motion';
-import { Minus, Square, X } from 'lucide-react';
+import { Minus, Moon, Square, Sun, X } from 'lucide-react';
+import { useAppStore } from '../store/useAppStore';
 
 
 export function TitleBar() {
+    const theme = useAppStore((state) => state.theme);
+    const setTheme = useAppStore((state) => state.setTheme);
+    const isLight = theme === 'light';
 
     const handleMinimize = () => window.electronAPI?.minimize();
     const handleMaximize = () => window.electronAPI?.maximize();
     const handleClose = () => window.electronAPI?.close();
+    const handleToggleTheme = () => setTheme(isLight ? 'dark' : 'light');
 
     return (
         <header
@@ -31,31 +36,47 @@ export function TitleBar() {
             </div>
 
             {/* Window Controls */}
-            <div className="flex items-center gap-1">
-                <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={handleMinimize}
-                    className="title-bar-btn"
+            <div className="flex items-center gap-2">
+                <button
+                    type="button"
+                    onClick={handleToggleTheme}
+                    className={`theme-toggle ${isLight ? 'is-light' : 'is-dark'}`}
+                    aria-label={isLight ? 'Cambiar a modo oscuro' : 'Cambiar a modo claro'}
+                    title={isLight ? 'Modo oscuro' : 'Modo claro'}
                 >
-                    <Minus size={14} />
-                </motion.button>
-                <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={handleMaximize}
-                    className="title-bar-btn"
-                >
-                    <Square size={10} />
-                </motion.button>
-                <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={handleClose}
-                    className="title-bar-btn close"
-                >
-                    <X size={14} />
-                </motion.button>
+                    <span className="theme-toggle-icon">
+                        <Moon size={13} />
+                    </span>
+                    <span className="theme-toggle-icon">
+                        <Sun size={13} />
+                    </span>
+                </button>
+                <div className="flex items-center gap-1">
+                    <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={handleMinimize}
+                        className="title-bar-btn"
+                    >
+                        <Minus size={14} />
+                    </motion.button>
+                    <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={handleMaximize}
+                        className="title-bar-btn"
+                    >
+                        <Square size={10} />
+                    </motion.button>
+                    <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={handleClose}
+                        className="title-bar-btn close"
+                    >
+                        <X size={14} />
+                    </motion.button>
+                </div>
             </div>
         </header>
     );

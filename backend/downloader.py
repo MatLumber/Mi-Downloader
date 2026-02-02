@@ -17,17 +17,34 @@ from typing import Callable, Optional, Dict, Any
 import yt_dlp
 
 
+WINDOWS_RESERVED_NAMES = {
+    'CON', 'PRN', 'AUX', 'NUL',
+    'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+    'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+}
+
+
 def sanitize_filename(filename: str) -> str:
     """Remove or replace characters that are invalid in Windows filenames."""
     # Characters not allowed in Windows filenames: \ / : * ? " < > |
     invalid_chars = r'[\\/:*?"<>|]'
     sanitized = re.sub(invalid_chars, '_', filename)
-    # Also replace any control characters and limit length
+    # Also replace any control characters
     sanitized = re.sub(r'[\x00-\x1f]', '', sanitized)
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+    sanitized = sanitized.rstrip('. ')
+
+    if not sanitized:
+        return "download"
+
+    if sanitized.upper() in WINDOWS_RESERVED_NAMES:
+        sanitized = f"file_{sanitized}"
+
     # Limit filename length (Windows max is 255)
     if len(sanitized) > 200:
-        sanitized = sanitized[:200]
-    return sanitized.strip()
+        sanitized = sanitized[:200].rstrip('. ')
+
+    return sanitized
 
 
 class DownloadStatus(Enum):
@@ -284,6 +301,8 @@ class DownloadManager:
             
             # Use custom output path or default
             target_dir = output_path or self.output_dir
+            target_dir = os.path.expanduser(os.path.expandvars(target_dir))
+            target_dir = os.path.abspath(target_dir)
             os.makedirs(target_dir, exist_ok=True)
             
             # PRE-FETCH INFO to determine title and ensure consistency
@@ -301,6 +320,9 @@ class DownloadManager:
                 except Exception:
                     # Fallback if pre-fetch fails
                     safe_title = f"download_{task_id}"
+
+            if not safe_title:
+                safe_title = f"download_{task_id}"
 
             # Build format selector and postprocessors
             if format_type == "audio":

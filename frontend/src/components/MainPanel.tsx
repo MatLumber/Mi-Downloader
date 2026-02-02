@@ -4,7 +4,7 @@ import {
     Link, Search, Loader2, Film, Music, Download,
     FolderOpen, Play, Trash2, SlidersHorizontal,
     Youtube, Instagram, Facebook, Twitter, Twitch,
-    History, MonitorPlay, Headphones, Repeat
+    History, MonitorPlay, Headphones, Repeat, Image
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import {
@@ -471,10 +471,11 @@ function CompressorView() {
         setCompressionFormat,
         compressionUseGpu,
         setCompressionUseGpu,
+        compressionOutputDir,
+        setCompressionOutputDir,
     } = useAppStore();
     const [inputPath, setInputPath] = useState('');
     const [inputSize, setInputSize] = useState<number | null>(null);
-    const [outputDir, setOutputDir] = useState(downloadPath);
     const [outputFormat, setOutputFormat] = useState<typeof COMPRESS_FORMATS[number]>(compressionFormat || 'mp4');
     const [preset, setPreset] = useState<'high' | 'balanced' | 'light'>(compressionPreset || 'high');
     const [task, setTask] = useState<{ progress: number; status: string; output_path: string; error?: string | null } | null>(null);
@@ -495,6 +496,7 @@ function CompressorView() {
     ] as const;
 
     const presetIndex = presetOptions.findIndex((option) => option.id === preset);
+    const outputDir = compressionOutputDir || downloadPath;
 
     const getFileName = (value: string) => {
         if (!value) return 'Selecciona un video';
@@ -561,7 +563,7 @@ function CompressorView() {
     const handleSelectOutput = async () => {
         const dir = await window.electronAPI?.selectDirectory?.();
         if (dir) {
-            setOutputDir(dir);
+            setCompressionOutputDir(dir);
         }
     };
 
@@ -1042,25 +1044,82 @@ function CompressorView() {
                         </div>
                     </div>
                 )}
+
+                {filteredHistory.length > 0 && (
+                    <div className="mt-8">
+                        <h4 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest mb-5">
+                            Conversiones recientes
+                        </h4>
+                        <div className="history-list">
+                            <AnimatePresence mode="popLayout">
+                                {filteredHistory.map((entry) => (
+                                    <motion.div
+                                        key={entry.id}
+                                        layout
+                                        initial={{ opacity: 0, y: 8 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, x: -20 }}
+                                        className="list-item"
+                                    >
+                                        <div className="list-thumb w-20 aspect-video rounded-xl overflow-hidden shrink-0 flex items-center justify-center">
+                                            {getMediaIcon(entry.media_type)}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <h4 className="text-[15px] font-medium text-zinc-200 truncate mb-1">{entry.title}</h4>
+                                            <div className="flex items-center gap-3 text-sm text-zinc-500">
+                                                <span className="tag-chip">{entry.format.toUpperCase()}</span>
+                                                <span className="text-zinc-600">•</span>
+                                                <span>{new Date(entry.completed_at).toLocaleDateString()}</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button onClick={() => handleOpenFile(entry.output_path)} className="history-action is-play">
+                                                <Play size={18} />
+                                            </button>
+                                            <button onClick={() => handleOpenFolder(entry.output_path)} className="history-action is-folder">
+                                                <FolderOpen size={18} />
+                                            </button>
+                                            <button onClick={() => removeConvertHistory(entry.id)} className="history-action is-remove">
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    </motion.div>
+                                ))}
+                            </AnimatePresence>
+                        </div>
+                    </div>
+                )}
             </div>
         </motion.div>
     );
 }
 
 function ConvertView() {
-    const [tab, setTab] = useState<'video' | 'audio' | 'image'>('video');
+    const convertTab = useAppStore((state) => state.convertTab);
+    const setConvertTab = useAppStore((state) => state.setConvertTab);
+    const convertVideoFormat = useAppStore((state) => state.convertVideoFormat);
+    const setConvertVideoFormat = useAppStore((state) => state.setConvertVideoFormat);
+    const convertAudioFormat = useAppStore((state) => state.convertAudioFormat);
+    const setConvertAudioFormat = useAppStore((state) => state.setConvertAudioFormat);
+    const convertImageFormat = useAppStore((state) => state.convertImageFormat);
+    const setConvertImageFormat = useAppStore((state) => state.setConvertImageFormat);
+    const convertVideoQuality = useAppStore((state) => state.convertVideoQuality);
+    const setConvertVideoQuality = useAppStore((state) => state.setConvertVideoQuality);
+    const convertAudioQuality = useAppStore((state) => state.convertAudioQuality);
+    const setConvertAudioQuality = useAppStore((state) => state.setConvertAudioQuality);
+    const convertImageQuality = useAppStore((state) => state.convertImageQuality);
+    const setConvertImageQuality = useAppStore((state) => state.setConvertImageQuality);
+    const convertOutputDir = useAppStore((state) => state.convertOutputDir);
+    const setConvertOutputDir = useAppStore((state) => state.setConvertOutputDir);
+    const convertHistory = useAppStore((state) => state.convertHistory);
+    const addConvertHistory = useAppStore((state) => state.addConvertHistory);
+    const removeConvertHistory = useAppStore((state) => state.removeConvertHistory);
     const [videoInput, setVideoInput] = useState('');
     const [audioInput, setAudioInput] = useState('');
     const [imageInput, setImageInput] = useState('');
-    const [videoFormat, setVideoFormat] = useState<typeof CONVERT_VIDEO_FORMATS[number]>('mp4');
-    const [audioFormat, setAudioFormat] = useState<typeof CONVERT_AUDIO_FORMATS[number]>('mp3');
-    const [imageFormat, setImageFormat] = useState<typeof CONVERT_IMAGE_FORMATS[number]>('webp');
-    const [videoQuality, setVideoQuality] = useState<'high' | 'balanced' | 'light'>('balanced');
-    const [audioQuality, setAudioQuality] = useState<typeof AUDIO_BITRATES[number]>('192');
-    const [imageQuality, setImageQuality] = useState<'high' | 'balanced' | 'light'>('balanced');
-    const [outputDir, setOutputDir] = useState<string>('');
     const [task, setTask] = useState<{ progress: number; status: string; output_path: string; error?: string | null } | null>(null);
     const [isConverting, setIsConverting] = useState(false);
+    const completedConvertIds = useRef(new Set<string>());
     const [videoInfo, setVideoInfo] = useState<{ duration: number | null; size: number | null; bit_rate: number | null } | null>(null);
     const [audioInfo, setAudioInfo] = useState<{ duration: number | null; size: number | null; bit_rate: number | null } | null>(null);
     const [imageInfo, setImageInfo] = useState<{ duration: number | null; size: number | null; bit_rate: number | null } | null>(null);
@@ -1085,10 +1144,24 @@ function ConvertView() {
         return `${(mb / 1024).toFixed(2)} GB`;
     };
 
+    const getMediaIcon = (type: 'video' | 'audio' | 'image') => {
+        if (type === 'audio') return <Music size={20} className="text-cyan-200" />;
+        if (type === 'image') return <Image size={20} className="text-cyan-200" />;
+        return <Film size={20} className="text-cyan-200" />;
+    };
+
+    const handleOpenFile = (filepath: string) => {
+        if (filepath) window.electronAPI?.openPath(filepath);
+    };
+
+    const handleOpenFolder = (filepath: string) => {
+        if (filepath) window.electronAPI?.showItemInFolder(filepath);
+    };
+
     const estimateVideoSize = () => {
         if (!videoInfo?.size) return null;
         const ratioMap = { high: 0.9, balanced: 0.7, light: 0.55 } as const;
-        const ratio = ratioMap[videoQuality] ?? 0.7;
+        const ratio = ratioMap[convertVideoQuality] ?? 0.7;
         if (videoInfo.duration && videoInfo.bit_rate) {
             const outRate = videoInfo.bit_rate * ratio;
             return (videoInfo.duration * outRate) / 8;
@@ -1099,7 +1172,7 @@ function ConvertView() {
     const estimateAudioSize = () => {
         if (!audioInfo?.size) return null;
         if (audioInfo.duration) {
-            const kbps = Number(audioQuality);
+            const kbps = Number(convertAudioQuality);
             return (audioInfo.duration * kbps * 1000) / 8;
         }
         const ratioMap = { high: 0.9, balanced: 0.7, light: 0.55 } as const;
@@ -1109,14 +1182,14 @@ function ConvertView() {
     const estimateImageSize = () => {
         if (!imageInfo?.size) return null;
         const ratioMap = { high: 0.85, balanced: 0.7, light: 0.5 } as const;
-        return imageInfo.size * (ratioMap[imageQuality] ?? 0.7);
+        return imageInfo.size * (ratioMap[convertImageQuality] ?? 0.7);
     };
 
-    const handleSelect = async (kind: 'video' | 'audio' | 'image', setter: (path: string) => void, infoSetter: (info: any) => void) => {
+    const handleSelect = async (kind: 'video' | 'audio' | 'media' | 'image', setter: (path: string) => void, infoSetter: (info: any) => void) => {
         const file = await window.electronAPI?.selectFile?.(kind);
         if (file) {
             setter(file);
-            setOutputDir(getDirName(file));
+            setConvertOutputDir(getDirName(file));
             setTask(null);
             try {
                 const info = await fetchLocalInfo(file);
@@ -1130,7 +1203,7 @@ function ConvertView() {
     const handleSelectOutput = async () => {
         const dir = await window.electronAPI?.selectDirectory?.();
         if (dir) {
-            setOutputDir(dir);
+            setConvertOutputDir(dir);
         }
     };
 
@@ -1139,12 +1212,12 @@ function ConvertView() {
         const inputPath = type === 'video' ? videoInput : type === 'audio' ? audioInput : imageInput;
         if (!inputPath) return;
 
-        const format = type === 'video' ? videoFormat : type === 'audio' ? audioFormat : imageFormat;
+        const format = type === 'video' ? convertVideoFormat : type === 'audio' ? convertAudioFormat : convertImageFormat;
         const quality = type === 'video'
-            ? videoQuality
+            ? convertVideoQuality
             : type === 'audio'
-                ? audioQuality
-                : imageQuality;
+                ? convertAudioQuality
+                : convertImageQuality;
 
         setIsConverting(true);
         setTask({ progress: 0, status: 'starting', output_path: '' });
@@ -1152,14 +1225,31 @@ function ConvertView() {
         try {
             const response = await startConvert(
                 inputPath,
-                outputDir || getDirName(inputPath),
+                convertOutputDir || getDirName(inputPath),
                 format,
                 type,
                 quality
             );
             subscribeToConvertEvents(
                 response.task_id,
-                (data) => setTask(data),
+                (data) => {
+                    setTask(data);
+                    if (data.status === 'completed' && !completedConvertIds.current.has(response.task_id)) {
+                        completedConvertIds.current.add(response.task_id);
+                        const outputPath = data.output_path || '';
+                        const title = getFileName(outputPath || inputPath);
+                        addConvertHistory({
+                            id: response.task_id,
+                            title,
+                            input_path: inputPath,
+                            output_path: outputPath,
+                            format,
+                            media_type: type,
+                            completed_at: new Date(),
+                        });
+                        setTask(null);
+                    }
+                },
                 (error) => {
                     console.error('[CONVERT] Failed:', error);
                     setTask({ progress: 0, status: 'error', output_path: '', error: error.message });
@@ -1174,6 +1264,8 @@ function ConvertView() {
         }
     };
 
+    const filteredHistory = convertHistory.filter((entry) => entry.media_type === convertTab);
+
     return (
         <motion.div
             initial={{ opacity: 0 }}
@@ -1185,26 +1277,26 @@ function ConvertView() {
             <div className="convert-shell">
                 <div className="convert-tabs">
                     <button
-                        onClick={() => setTab('video')}
-                        className={`convert-tab ${tab === 'video' ? 'active' : ''}`}
+                        onClick={() => setConvertTab('video')}
+                        className={`convert-tab ${convertTab === 'video' ? 'active' : ''}`}
                     >
                         Videos
                     </button>
                     <button
-                        onClick={() => setTab('audio')}
-                        className={`convert-tab ${tab === 'audio' ? 'active' : ''}`}
+                        onClick={() => setConvertTab('audio')}
+                        className={`convert-tab ${convertTab === 'audio' ? 'active' : ''}`}
                     >
                         Audios
                     </button>
                     <button
-                        onClick={() => setTab('image')}
-                        className={`convert-tab ${tab === 'image' ? 'active' : ''}`}
+                        onClick={() => setConvertTab('image')}
+                        className={`convert-tab ${convertTab === 'image' ? 'active' : ''}`}
                     >
                         Imagenes
                     </button>
                 </div>
 
-                {tab === 'video' && (
+                {convertTab === 'video' && (
                     <div className="convert-card">
                         <div className="compress-header">
                             <h3>Videos</h3>
@@ -1227,8 +1319,8 @@ function ConvertView() {
                                     {CONVERT_VIDEO_FORMATS.map((format) => (
                                         <button
                                             key={format}
-                                            onClick={() => setVideoFormat(format)}
-                                            className={`segment-item ${videoFormat === format ? 'active' : ''}`}
+                                            onClick={() => setConvertVideoFormat(format)}
+                                            className={`segment-item ${convertVideoFormat === format ? 'active' : ''}`}
                                         >
                                             {format.toUpperCase()}
                                         </button>
@@ -1241,8 +1333,8 @@ function ConvertView() {
                                     {['high', 'balanced', 'light'].map((option) => (
                                         <button
                                             key={option}
-                                            onClick={() => setVideoQuality(option as 'high' | 'balanced' | 'light')}
-                                            className={`segment-item ${videoQuality === option ? 'active' : ''}`}
+                                            onClick={() => setConvertVideoQuality(option as 'high' | 'balanced' | 'light')}
+                                            className={`segment-item ${convertVideoQuality === option ? 'active' : ''}`}
                                         >
                                             {option === 'high' ? 'Alta' : option === 'balanced' ? 'Balanceada' : 'Ligera'}
                                         </button>
@@ -1276,19 +1368,19 @@ function ConvertView() {
                     </div>
                 )}
 
-                {tab === 'audio' && (
+                {convertTab === 'audio' && (
                     <div className="convert-card">
                         <div className="compress-header">
                             <h3>Audios</h3>
-                            <p>Convierte mp3, aac, wav, flac, ogg, opus o m4a.</p>
+                            <p>Extrae audio de videos y convierte mp3, aac, wav, flac, ogg, opus o m4a.</p>
                         </div>
-                        <button onClick={() => handleSelect('audio', setAudioInput, setAudioInfo)} className="file-picker">
+                        <button onClick={() => handleSelect('media', setAudioInput, setAudioInfo)} className="file-picker">
                             <div className="file-badge">
                                 <Music size={20} className="text-cyan-200" />
                             </div>
                             <div className="file-text">
                                 <span className="file-name">{getFileName(audioInput)}</span>
-                                <span className="file-path">{audioInput || 'MP3, AAC, WAV, FLAC, OGG, OPUS, M4A'}</span>
+                                <span className="file-path">{audioInput || 'MP4, MKV, WEBM, MOV, AVI, M4V, MP3, AAC, WAV, FLAC, OGG, OPUS, M4A'}</span>
                             </div>
                             <span className="file-action">Elegir</span>
                         </button>
@@ -1299,8 +1391,8 @@ function ConvertView() {
                                     {CONVERT_AUDIO_FORMATS.map((format) => (
                                         <button
                                             key={format}
-                                            onClick={() => setAudioFormat(format)}
-                                            className={`segment-item ${audioFormat === format ? 'active' : ''}`}
+                                            onClick={() => setConvertAudioFormat(format)}
+                                            className={`segment-item ${convertAudioFormat === format ? 'active' : ''}`}
                                         >
                                             {format.toUpperCase()}
                                         </button>
@@ -1313,8 +1405,8 @@ function ConvertView() {
                                     {AUDIO_BITRATES.map((bitrate) => (
                                         <button
                                             key={bitrate}
-                                            onClick={() => setAudioQuality(bitrate)}
-                                            className={`segment-item ${audioQuality === bitrate ? 'active' : ''}`}
+                                            onClick={() => setConvertAudioQuality(bitrate)}
+                                            className={`segment-item ${convertAudioQuality === bitrate ? 'active' : ''}`}
                                         >
                                             {bitrate} kbps
                                         </button>
@@ -1348,7 +1440,7 @@ function ConvertView() {
                     </div>
                 )}
 
-                {tab === 'image' && (
+                {convertTab === 'image' && (
                     <div className="convert-card">
                         <div className="compress-header">
                             <h3>Imagenes</h3>
@@ -1371,8 +1463,8 @@ function ConvertView() {
                                     {CONVERT_IMAGE_FORMATS.map((format) => (
                                         <button
                                             key={format}
-                                            onClick={() => setImageFormat(format)}
-                                            className={`segment-item ${imageFormat === format ? 'active' : ''}`}
+                                            onClick={() => setConvertImageFormat(format)}
+                                            className={`segment-item ${convertImageFormat === format ? 'active' : ''}`}
                                         >
                                             {format.toUpperCase()}
                                         </button>
@@ -1385,8 +1477,8 @@ function ConvertView() {
                                     {['high', 'balanced', 'light'].map((option) => (
                                         <button
                                             key={option}
-                                            onClick={() => setImageQuality(option as 'high' | 'balanced' | 'light')}
-                                            className={`segment-item ${imageQuality === option ? 'active' : ''}`}
+                                            onClick={() => setConvertImageQuality(option as 'high' | 'balanced' | 'light')}
+                                            className={`segment-item ${convertImageQuality === option ? 'active' : ''}`}
                                         >
                                             {option === 'high' ? 'Alta' : option === 'balanced' ? 'Balanceada' : 'Ligera'}
                                         </button>

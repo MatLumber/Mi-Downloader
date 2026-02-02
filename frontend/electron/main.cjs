@@ -293,6 +293,7 @@ ipcMain.handle('select-file', async (_, kind = 'video') => {
   const filtersByKind = {
     video: { name: 'Videos', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v'] },
     audio: { name: 'Audios', extensions: ['mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a'] },
+    media: { name: 'Audio y Video', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v', 'mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a'] },
     image: { name: 'Imagenes', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'tif'] },
     any: { name: 'Archivos', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v', 'mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'tif'] },
   };

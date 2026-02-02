@@ -6,7 +6,8 @@ import { useAppStore } from './store/useAppStore';
 import { checkApiHealth } from './api/client';
 
 function App() {
-  const { setApiOnline } = useAppStore();
+  const setApiOnline = useAppStore((state) => state.setApiOnline);
+  const theme = useAppStore((state) => state.theme);
   const [appVersion, setAppVersion] = useState<string>('');
   const [updateStatus, setUpdateStatus] = useState<string>('');
 
@@ -40,6 +41,12 @@ function App() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
+    root.style.colorScheme = theme;
+  }, [theme]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI?.onUpdateStatus?.((payload) => {

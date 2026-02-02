@@ -55,6 +55,16 @@ export interface CompletedDownload {
     completed_at: Date;
 }
 
+export interface ConvertHistoryItem {
+    id: string;
+    title: string;
+    input_path: string;
+    output_path: string;
+    format: string;
+    media_type: 'video' | 'audio' | 'image';
+    completed_at: Date;
+}
+
 export type LogLevel = 'info' | 'success' | 'warning' | 'error';
 
 export interface LogEntry {
@@ -65,6 +75,37 @@ export interface LogEntry {
 }
 
 export type ActiveTab = 'queue' | 'history' | 'compress' | 'convert' | 'terminal';
+export type ConvertTab = 'video' | 'audio' | 'image';
+
+const readStoredTheme = (): 'dark' | 'light' => {
+    if (typeof window === 'undefined') return 'dark';
+    try {
+        const stored = window.localStorage.getItem('gravitydown-theme');
+        if (stored === 'light' || stored === 'dark') {
+            return stored;
+        }
+        const persisted = window.localStorage.getItem('gravitydown-storage');
+        if (persisted) {
+            const parsed = JSON.parse(persisted);
+            const theme = parsed?.state?.theme;
+            if (theme === 'light' || theme === 'dark') {
+                return theme;
+            }
+        }
+    } catch {
+        // ignore
+    }
+    return 'dark';
+};
+
+const writeStoredTheme = (theme: 'dark' | 'light') => {
+    if (typeof window === 'undefined') return;
+    try {
+        window.localStorage.setItem('gravitydown-theme', theme);
+    } catch {
+        // ignore
+    }
+};
 
 interface AppState {
     // URL Input
@@ -105,9 +146,33 @@ interface AppState {
     clearHistory: () => void;
     removeFromHistory: (id: string) => void;
 
+    // Convert History
+    convertHistory: ConvertHistoryItem[];
+    addConvertHistory: (entry: ConvertHistoryItem) => void;
+    removeConvertHistory: (id: string) => void;
+    clearConvertHistory: (mediaType?: ConvertTab) => void;
+
     // Active Panel Tab
     activeTab: ActiveTab;
     setActiveTab: (tab: ActiveTab) => void;
+
+    // Convert Settings
+    convertTab: ConvertTab;
+    setConvertTab: (tab: ConvertTab) => void;
+    convertVideoFormat: 'mp4' | 'mkv' | 'webm' | 'mov' | 'avi' | 'm4v';
+    setConvertVideoFormat: (format: 'mp4' | 'mkv' | 'webm' | 'mov' | 'avi' | 'm4v') => void;
+    convertAudioFormat: 'mp3' | 'aac' | 'wav' | 'flac' | 'ogg' | 'opus' | 'm4a';
+    setConvertAudioFormat: (format: 'mp3' | 'aac' | 'wav' | 'flac' | 'ogg' | 'opus' | 'm4a') => void;
+    convertImageFormat: 'png' | 'jpg' | 'webp' | 'bmp' | 'tiff';
+    setConvertImageFormat: (format: 'png' | 'jpg' | 'webp' | 'bmp' | 'tiff') => void;
+    convertVideoQuality: 'high' | 'balanced' | 'light';
+    setConvertVideoQuality: (quality: 'high' | 'balanced' | 'light') => void;
+    convertAudioQuality: '320' | '256' | '192' | '128';
+    setConvertAudioQuality: (quality: '320' | '256' | '192' | '128') => void;
+    convertImageQuality: 'high' | 'balanced' | 'light';
+    setConvertImageQuality: (quality: 'high' | 'balanced' | 'light') => void;
+    convertOutputDir: string;
+    setConvertOutputDir: (path: string) => void;
 
     // Terminal Log
     logs: LogEntry[];
@@ -122,6 +187,10 @@ interface AppState {
     downloadPath: string;
     setDownloadPath: (path: string) => void;
 
+    // Theme
+    theme: 'dark' | 'light';
+    setTheme: (theme: 'dark' | 'light') => void;
+
     // Compression Settings
     compressionPreset: 'high' | 'balanced' | 'light';
     setCompressionPreset: (preset: 'high' | 'balanced' | 'light') => void;
@@ -129,6 +198,8 @@ interface AppState {
     setCompressionFormat: (format: 'mp4' | 'mkv' | 'webm') => void;
     compressionUseGpu: boolean;
     setCompressionUseGpu: (enabled: boolean) => void;
+    compressionOutputDir: string;
+    setCompressionOutputDir: (path: string) => void;
 
     // Legacy compatibility
     currentTask: DownloadTask | null;
@@ -244,9 +315,41 @@ export const useAppStore = create<AppState>()(
                 audioHistory: state.audioHistory.filter((d) => d.id !== id)
             })),
 
+            // Convert History
+            convertHistory: [],
+            addConvertHistory: (entry) => set((state) => ({
+                convertHistory: [entry, ...state.convertHistory].slice(0, 50)
+            })),
+            removeConvertHistory: (id) => set((state) => ({
+                convertHistory: state.convertHistory.filter((entry) => entry.id !== id)
+            })),
+            clearConvertHistory: (mediaType) => set((state) => ({
+                convertHistory: mediaType
+                    ? state.convertHistory.filter((entry) => entry.media_type !== mediaType)
+                    : []
+            })),
+
             // Active Tab
             activeTab: 'queue',
             setActiveTab: (tab) => set({ activeTab: tab }),
+
+            // Convert Settings
+            convertTab: 'video',
+            setConvertTab: (tab) => set({ convertTab: tab }),
+            convertVideoFormat: 'mp4',
+            setConvertVideoFormat: (format) => set({ convertVideoFormat: format }),
+            convertAudioFormat: 'mp3',
+            setConvertAudioFormat: (format) => set({ convertAudioFormat: format }),
+            convertImageFormat: 'webp',
+            setConvertImageFormat: (format) => set({ convertImageFormat: format }),
+            convertVideoQuality: 'balanced',
+            setConvertVideoQuality: (quality) => set({ convertVideoQuality: quality }),
+            convertAudioQuality: '192',
+            setConvertAudioQuality: (quality) => set({ convertAudioQuality: quality }),
+            convertImageQuality: 'balanced',
+            setConvertImageQuality: (quality) => set({ convertImageQuality: quality }),
+            convertOutputDir: '~/Downloads/GravityDown',
+            setConvertOutputDir: (path) => set({ convertOutputDir: path }),
 
             // Terminal Log
             logs: [],
@@ -269,6 +372,13 @@ export const useAppStore = create<AppState>()(
             downloadPath: '~/Downloads/GravityDown',
             setDownloadPath: (path) => set({ downloadPath: path }),
 
+            // Theme
+            theme: readStoredTheme(),
+            setTheme: (theme) => {
+                writeStoredTheme(theme);
+                set({ theme });
+            },
+
             // Compression Settings
             compressionPreset: 'high',
             setCompressionPreset: (preset) => set({ compressionPreset: preset }),
@@ -276,6 +386,8 @@ export const useAppStore = create<AppState>()(
             setCompressionFormat: (format) => set({ compressionFormat: format }),
             compressionUseGpu: false,
             setCompressionUseGpu: (enabled) => set({ compressionUseGpu: enabled }),
+            compressionOutputDir: '~/Downloads/GravityDown',
+            setCompressionOutputDir: (path) => set({ compressionOutputDir: path }),
 
             // Legacy compatibility - maps to first active download
             currentTask: null,
@@ -295,15 +407,29 @@ export const useAppStore = create<AppState>()(
             name: 'gravitydown-storage',
             partialize: (state) => ({
                 // Only persist these fields
+                activeTab: state.activeTab,
+                formatType: state.formatType,
+                quality: state.quality,
                 videoHistory: state.videoHistory,
                 audioHistory: state.audioHistory,
                 downloadPath: state.downloadPath,
                 videoFormat: state.videoFormat,
                 audioFormat: state.audioFormat,
                 audioQuality: state.audioQuality,
+                convertHistory: state.convertHistory,
+                convertTab: state.convertTab,
+                convertVideoFormat: state.convertVideoFormat,
+                convertAudioFormat: state.convertAudioFormat,
+                convertImageFormat: state.convertImageFormat,
+                convertVideoQuality: state.convertVideoQuality,
+                convertAudioQuality: state.convertAudioQuality,
+                convertImageQuality: state.convertImageQuality,
+                convertOutputDir: state.convertOutputDir,
                 compressionPreset: state.compressionPreset,
                 compressionFormat: state.compressionFormat,
                 compressionUseGpu: state.compressionUseGpu,
+                compressionOutputDir: state.compressionOutputDir,
+                theme: state.theme,
             }),
             // Handle date deserialization
             onRehydrateStorage: () => (state) => {
@@ -317,6 +443,13 @@ export const useAppStore = create<AppState>()(
                         ...item,
                         completed_at: new Date(item.completed_at)
                     }));
+                    state.convertHistory = (state.convertHistory || []).map(entry => ({
+                        ...entry,
+                        completed_at: new Date(entry.completed_at)
+                    }));
+                    if (state.theme) {
+                        writeStoredTheme(state.theme);
+                    }
                 }
             }
         }
