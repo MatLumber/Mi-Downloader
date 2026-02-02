@@ -146,6 +146,8 @@ function createWindow() {
   mainWindow.webContents.on('will-attach-webview', (event) => {
     event.preventDefault();
   });
+
+  // Handle file drop via navigation (older Electron versions)
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (url.startsWith('file:')) {
       event.preventDefault();
@@ -156,11 +158,12 @@ function createWindow() {
           filePath = filePath.slice(1);
         }
         filePath = filePath.replace(/\r?\n/g, '').replace(/\r/g, '');
-        if (filePath) {
+        if (filePath && mainWindow) {
+          console.log('[Main] File drop via navigation:', filePath);
           mainWindow.webContents.send('file-drop', filePath);
         }
       } catch (error) {
-        // ignore
+        console.error('[Main] Error parsing file URL:', error);
       }
       return;
     }
@@ -169,6 +172,17 @@ function createWindow() {
     if (!allowed) {
       event.preventDefault();
     }
+  });
+
+  // Handle drag-and-drop events more reliably
+  mainWindow.webContents.on('did-create-window', (window) => {
+    window.close();
+  });
+
+  // Intercept drag-and-drop at the session level for better reliability
+  const session = mainWindow.webContents.session;
+  session.on('will-download', (event, item, webContents) => {
+    event.preventDefault();
   });
 
   mainWindow.on('closed', () => {
@@ -323,6 +337,29 @@ ipcMain.handle('stat-file', async (_, filePath) => {
   } catch (error) {
     return null;
   }
+});
+
+// Global drag-and-drop handler for all web contents
+app.on('web-contents-created', (_, webContents) => {
+  webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith('file:')) {
+      event.preventDefault();
+      try {
+        const parsed = new URL(url);
+        let filePath = decodeURIComponent(parsed.pathname || '');
+        if (process.platform === 'win32' && filePath.startsWith('/')) {
+          filePath = filePath.slice(1);
+        }
+        filePath = filePath.replace(/\r?\n/g, '').replace(/\r/g, '');
+        if (filePath) {
+          console.log('[Main] Global file drop handler:', filePath);
+          webContents.send('file-drop', filePath);
+        }
+      } catch (error) {
+        console.error('[Main] Global handler error:', error);
+      }
+    }
+  });
 });
 
 app.whenReady().then(() => {

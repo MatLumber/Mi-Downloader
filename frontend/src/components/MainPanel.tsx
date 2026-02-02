@@ -520,37 +520,7 @@ function CompressorView() {
         }
     };
 
-    const resolveDropPath = (event: DragEvent) => {
-        let filePath = '';
-        const file = event.dataTransfer?.files?.[0];
-        if (file) {
-            filePath = (file as unknown as { path?: string })?.path || '';
-        }
 
-        if (!filePath && event.dataTransfer?.items?.length) {
-            const item = event.dataTransfer.items[0];
-            const itemFile = item.getAsFile?.();
-            filePath = (itemFile as unknown as { path?: string })?.path || '';
-        }
-
-        if (!filePath) {
-            const uriList = event.dataTransfer?.getData('text/uri-list') || '';
-            const first = uriList
-                .split(/\r?\n/)
-                .map((line) => line.trim())
-                .find((line) => line && !line.startsWith('#'));
-            if (first && first.startsWith('file://')) {
-                let decoded = decodeURIComponent(first.replace('file://', ''));
-                if (decoded.startsWith('///')) decoded = decoded.slice(2);
-                if (decoded.startsWith('/') && /^[A-Za-z]:/.test(decoded.slice(1))) {
-                    decoded = decoded.slice(1);
-                }
-                filePath = decoded;
-            }
-        }
-
-        return filePath;
-    };
 
     const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
         event.preventDefault();
@@ -643,67 +613,128 @@ function CompressorView() {
     }, []);
 
     useEffect(() => {
-        window.electronAPI?.onFileDrop?.(async (filePath) => {
-            if (dropHandledRef.current) return;
+        // Native Electron file drop handler - most reliable method
+        const unsubscribe = window.electronAPI?.onFileDrop?.((filePath: string) => {
+            console.log('[Drop] Received path from Electron:', filePath);
+            
+            if (dropHandledRef.current) {
+                console.log('[Drop] Already handled, skipping');
+                return;
+            }
             dropHandledRef.current = true;
 
             setIsDragging(false);
             dragCounterRef.current = 0;
 
-            const resolvedPath = filePath || '';
-            if (!resolvedPath) {
-                setDropWarning('No se pudo leer el archivo. Usa clic para seleccionar.');
-                dropHandledRef.current = false;
+            if (!filePath || typeof filePath !== 'string') {
+                console.error('[Drop] Invalid path received:', filePath);
+                setDropWarning('No se pudo leer el archivo. Intenta de nuevo o usa clic para seleccionar.');
+                setTimeout(() => {
+                    dropHandledRef.current = false;
+                }, 500);
                 return;
             }
-            const lower = resolvedPath.toLowerCase();
-            if (!lower.match(/\.(mp4|mkv|webm|avi|mov)$/)) {
-                setDropWarning('Formato no soportado. Usa MP4, MKV o WEBM.');
-                dropHandledRef.current = false;
+
+            // Validate file extension
+            const lower = filePath.toLowerCase();
+            const validExtensions = /\.(mp4|mkv|webm|avi|mov|m4v)$/;
+            
+            if (!validExtensions.test(lower)) {
+                console.log('[Drop] Invalid format:', filePath);
+                setDropWarning('Formato no soportado. Usa: MP4, MKV, WEBM, AVI, MOV o M4V.');
+                setTimeout(() => {
+                    dropHandledRef.current = false;
+                }, 500);
                 return;
             }
+
+            console.log('[Drop] File accepted:', filePath);
             setDropWarning(null);
-            setInputPath(resolvedPath);
+            setInputPath(filePath);
             setTask(null);
+            
+            // Reset after a longer delay to prevent race conditions
             setTimeout(() => {
                 dropHandledRef.current = false;
-            }, 300);
+            }, 500);
         });
 
-        const clearOverlay = () => {
-            setIsDragging(false);
-            dragCounterRef.current = 0;
-        };
-
-        const handleDropCapture = (event: DragEvent) => {
+        // Backup: DOM drop handler for edge cases
+        const handleDomDrop = (event: DragEvent) => {
             event.preventDefault();
             event.stopPropagation();
-            clearOverlay();
+            
+            setIsDragging(false);
+            dragCounterRef.current = 0;
 
-            if (dropHandledRef.current) return;
-            dropHandledRef.current = true;
-
-            const filePath = resolveDropPath(event);
-
-            if (filePath) {
-                setDropWarning(null);
-                setInputPath(filePath);
-                setTask(null);
-            } else {
-                setDropWarning('No se pudo leer el archivo. Usa clic para seleccionar.');
+            // Skip if Electron already handled it
+            if (dropHandledRef.current) {
+                console.log('[Drop] DOM handler: Electron already handled');
+                return;
             }
 
-            setTimeout(() => {
-                dropHandledRef.current = false;
-            }, 300);
+            console.log('[Drop] DOM handler: attempting to extract path');
+            
+            // Try to get path from dataTransfer (rarely works in modern browsers)
+            const files = event.dataTransfer?.files;
+            if (files && files.length > 0) {
+                const file = files[0];
+                // @ts-ignore - path is added by Electron
+                const path = file?.path;
+                
+                if (path) {
+                    console.log('[Drop] DOM handler: Found path:', path);
+                    dropHandledRef.current = true;
+                    
+                    const lower = path.toLowerCase();
+                    if (/\.(mp4|mkv|webm|avi|mov|m4v)$/.test(lower)) {
+                        setDropWarning(null);
+                        setInputPath(path);
+                        setTask(null);
+                    } else {
+                        setDropWarning('Formato no soportado. Usa: MP4, MKV, WEBM, AVI, MOV o M4V.');
+                    }
+                    
+                    setTimeout(() => {
+                        dropHandledRef.current = false;
+                    }, 500);
+                    return;
+                }
+            }
+
+            console.log('[Drop] DOM handler: No path available, relying on Electron');
         };
 
-        document.addEventListener('drop', handleDropCapture, { capture: true, passive: false });
-        window.addEventListener('dragend', clearOverlay);
+        // Prevent default drag behaviors
+        const handleDragOver = (event: DragEvent) => {
+            event.preventDefault();
+            event.stopPropagation();
+        };
+
+        const handleDragLeave = () => {
+            dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+            if (dragCounterRef.current === 0) {
+                setIsDragging(false);
+            }
+        };
+
+        const handleDragEnter = () => {
+            dragCounterRef.current += 1;
+            setIsDragging(true);
+        };
+
+        // Add event listeners
+        document.addEventListener('drop', handleDomDrop, { capture: false });
+        document.addEventListener('dragover', handleDragOver, { capture: false });
+        document.addEventListener('dragleave', handleDragLeave, { capture: false });
+        document.addEventListener('dragenter', handleDragEnter, { capture: false });
 
         return () => {
-            document.removeEventListener('drop', handleDropCapture, true as unknown as EventListenerOptions);
-            window.removeEventListener('dragend', clearOverlay);
+            if (unsubscribe) unsubscribe();
+            document.removeEventListener('drop', handleDomDrop);
+            document.removeEventListener('dragover', handleDragOver);
+            document.removeEventListener('dragleave', handleDragLeave);
+            document.removeEventListener('dragenter', handleDragEnter);
         };
     }, []);
 
@@ -746,89 +777,7 @@ function CompressorView() {
         return Math.max(5 * 1024 * 1024, inputSize * ratio);
     };
 
-    useEffect(() => {
-        const preventDefaults = (event: DragEvent) => {
-            event.preventDefault();
-            event.stopPropagation();
-        };
 
-        const handleWindowDrop = (event: DragEvent) => {
-            preventDefaults(event);
-            dragCounterRef.current = 0;
-            setIsDragging(false);
-
-            let filePath = '';
-            const file = event.dataTransfer?.files?.[0];
-            if (file) {
-                filePath = (file as unknown as { path?: string }).path || '';
-            }
-
-            if (!filePath && event.dataTransfer?.items?.length) {
-                const item = event.dataTransfer.items[0];
-                const fileFromItem = item.getAsFile?.();
-                filePath = (fileFromItem as unknown as { path?: string })?.path || '';
-            }
-
-            if (!filePath) return;
-            const lower = filePath.toLowerCase();
-            if (!lower.match(/\.(mp4|mkv|webm|avi|mov)$/)) return;
-            setInputPath(filePath);
-            setTask(null);
-        };
-
-        const handleWindowDragOver = (event: DragEvent) => {
-            preventDefaults(event);
-            event.dataTransfer?.dropEffect && (event.dataTransfer.dropEffect = 'copy');
-        };
-
-        const handleWindowDragEnter = (event: DragEvent) => {
-            preventDefaults(event);
-            dragCounterRef.current += 1;
-            setIsDragging(true);
-        };
-
-        const handleWindowDragLeave = (event: DragEvent) => {
-            preventDefaults(event);
-            dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
-            if (dragCounterRef.current === 0) setIsDragging(false);
-        };
-
-        const handleWindowDragEnd = (event: DragEvent) => {
-            preventDefaults(event);
-            dragCounterRef.current = 0;
-            setIsDragging(false);
-        };
-
-        const body = document.body;
-
-        window.addEventListener('dragover', handleWindowDragOver);
-        window.addEventListener('drop', handleWindowDrop);
-        window.addEventListener('dragenter', handleWindowDragEnter);
-        window.addEventListener('dragleave', handleWindowDragLeave);
-        window.addEventListener('dragend', handleWindowDragEnd);
-
-        if (body) {
-            body.addEventListener('dragover', handleWindowDragOver, true);
-            body.addEventListener('drop', handleWindowDrop, true);
-            body.addEventListener('dragenter', handleWindowDragEnter, true);
-            body.addEventListener('dragleave', handleWindowDragLeave, true);
-        }
-
-        return () => {
-            window.removeEventListener('dragover', handleWindowDragOver);
-            window.removeEventListener('drop', handleWindowDrop);
-            window.removeEventListener('dragenter', handleWindowDragEnter);
-            window.removeEventListener('dragleave', handleWindowDragLeave);
-            window.removeEventListener('dragend', handleWindowDragEnd);
-
-            if (body) {
-                body.removeEventListener('dragover', handleWindowDragOver, true);
-                body.removeEventListener('drop', handleWindowDrop, true);
-                body.removeEventListener('dragenter', handleWindowDragEnter, true);
-                body.removeEventListener('dragleave', handleWindowDragLeave, true);
-            }
-        };
-    }, []);
 
     return (
         <motion.div

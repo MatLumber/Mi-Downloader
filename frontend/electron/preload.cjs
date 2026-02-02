@@ -1,7 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Drag and drop is handled in renderer; navigation is blocked in main.
-
 contextBridge.exposeInMainWorld('electronAPI', {
     // Window controls
     minimize: () => ipcRenderer.send('window-minimize'),
@@ -14,7 +12,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openFolder: (path) => ipcRenderer.send('open-folder', path),
     selectDirectory: () => ipcRenderer.invoke('select-directory'),
     selectFile: (kind) => ipcRenderer.invoke('select-file', kind),
-    onFileDrop: (callback) => ipcRenderer.on('file-drop', (_, path) => callback(path)),
+    onFileDrop: (callback) => {
+      const listener = (_, path) => callback(path);
+      ipcRenderer.on('file-drop', listener);
+      return () => ipcRenderer.removeListener('file-drop', listener);
+    },
     statFile: (path) => ipcRenderer.invoke('stat-file', path),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
     onUpdateStatus: (callback) => {
