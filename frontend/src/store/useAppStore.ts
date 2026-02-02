@@ -416,7 +416,6 @@ export const useAppStore = create<AppState>()(
                 videoFormat: state.videoFormat,
                 audioFormat: state.audioFormat,
                 audioQuality: state.audioQuality,
-                convertHistory: state.convertHistory,
                 convertTab: state.convertTab,
                 convertVideoFormat: state.convertVideoFormat,
                 convertAudioFormat: state.convertAudioFormat,
@@ -442,10 +441,6 @@ export const useAppStore = create<AppState>()(
                     state.audioHistory = state.audioHistory.map(item => ({
                         ...item,
                         completed_at: new Date(item.completed_at)
-                    }));
-                    state.convertHistory = (state.convertHistory || []).map(entry => ({
-                        ...entry,
-                        completed_at: new Date(entry.completed_at)
                     }));
                     if (state.theme) {
                         writeStoredTheme(state.theme);

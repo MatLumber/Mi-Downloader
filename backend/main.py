@@ -15,7 +15,7 @@ import shutil
 import urllib.request
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Optional, Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -72,6 +72,7 @@ class CompressionTask:
     progress: float = 0.0
     eta: str = "N/A"
     error: Optional[str] = None
+    process: Optional[Any] = None
 
 
 # ============ Pydantic Models ============
@@ -175,6 +176,7 @@ class ConvertTask:
     progress: float = 0.0
     eta: str = "N/A"
     error: Optional[str] = None
+    process: Optional[Any] = None
 
 
 class CompressionEncoderResponse(BaseModel):
@@ -444,6 +446,11 @@ def _run_compression(task_id: str, input_path: str, output_dir: str, output_form
         bufsize=0,
     )
 
+    with compression_lock:
+        task = compression_tasks.get(task_id)
+        if task:
+            task.process = process
+
     out_time_ms = 0
     last_progress = 0.0
     log_count = 0
@@ -589,13 +596,17 @@ def _run_compression(task_id: str, input_path: str, output_dir: str, output_form
         task = compression_tasks.get(task_id)
         if not task:
             return
-    if process.returncode == 0:
-        task.status = CompressionStatus.COMPLETED
-        task.progress = 100.0
-    else:
-        task.status = CompressionStatus.ERROR
-        tail = "\n".join(last_error_lines[-5:])
-        task.error = tail or "Error al comprimir el video."
+        # If canceled manually, do not overwrite the error
+        if task.error == "Cancelled by user":
+            return
+            
+        if process.returncode == 0:
+            task.status = CompressionStatus.COMPLETED
+            task.progress = 100.0
+        else:
+            task.status = CompressionStatus.ERROR
+            tail = "\n".join(last_error_lines[-5:])
+            task.error = tail or "Error al comprimir el video."
 
 
 def _run_convert(task_id: str, input_path: str, output_dir: str, output_format: str, media_type: str, quality: str) -> None:
@@ -666,6 +677,11 @@ def _run_convert(task_id: str, input_path: str, output_dir: str, output_format: 
         text=False,
         bufsize=0,
     )
+
+    with convert_lock:
+        task = convert_tasks.get(task_id)
+        if task:
+            task.process = process
 
     out_time_ms = 0
     last_progress = 0.0
@@ -758,6 +774,10 @@ def _run_convert(task_id: str, input_path: str, output_dir: str, output_format: 
         task = convert_tasks.get(task_id)
         if not task:
             return
+        # If canceled manually, do not overwrite the error
+        if task.error == "Cancelled by user":
+            return
+
         if process.returncode == 0:
             task.status = "completed"
             task.progress = 100.0
@@ -910,6 +930,58 @@ async def cancel_download(task_id: str):
     
     if not success:
         raise HTTPException(status_code=400, detail="Cannot cancel this task")
+    
+    return {"status": "cancelled", "task_id": task_id}
+
+
+@app.delete("/compress/cancel/{task_id}")
+async def cancel_compression(task_id: str):
+    """
+    Cancel an in-progress compression.
+    """
+    with compression_lock:
+        task = compression_tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        if task.status != CompressionStatus.COMPRESSING:
+            raise HTTPException(status_code=400, detail="Cannot cancel this task")
+        
+        if task.process:
+            task.process.terminate()
+            try:
+                task.process.wait(timeout=5)
+            except:
+                task.process.kill()
+        
+        task.status = CompressionStatus.ERROR
+        task.error = "Cancelled by user"
+    
+    return {"status": "cancelled", "task_id": task_id}
+
+
+@app.delete("/convert/cancel/{task_id}")
+async def cancel_convert(task_id: str):
+    """
+    Cancel an in-progress conversion.
+    """
+    with convert_lock:
+        task = convert_tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        if task.status != "processing":
+            raise HTTPException(status_code=400, detail="Cannot cancel this task")
+        
+        if task.process:
+            task.process.terminate()
+            try:
+                task.process.wait(timeout=5)
+            except:
+                task.process.kill()
+        
+        task.status = "error"
+        task.error = "Cancelled by user"
     
     return {"status": "cancelled", "task_id": task_id}
 

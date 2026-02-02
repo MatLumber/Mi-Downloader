@@ -4,7 +4,7 @@ import {
     Link, Search, Loader2, Film, Music, Download,
     FolderOpen, Play, Trash2, SlidersHorizontal,
     Youtube, Instagram, Facebook, Twitter, Twitch,
-    History, MonitorPlay, Headphones, Repeat, Image
+    History, MonitorPlay, Headphones, Repeat, Image, X
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import {
@@ -19,6 +19,9 @@ import {
     startDownload,
     subscribeToCompressionEvents,
     subscribeToTaskEvents,
+    cancelDownload,
+    cancelCompression,
+    cancelConvert,
 } from '../api/client';
 import type { DownloadTask } from '../store/useAppStore';
 
@@ -452,6 +455,10 @@ function DownloaderView() {
                                     onOpenFile={() => handleOpenFile(task.filepath)}
                                     onOpenFolder={() => handleOpenFolder(task.filepath)}
                                     onRemove={() => removeFromQueue(task.task_id)}
+                                    onCancel={task.status === 'downloading' ? () => {
+                                        cancelDownload(task.task_id).catch(() => { });
+                                        removeFromQueue(task.task_id);
+                                    } : undefined}
                                 />
                             ))}
                         </AnimatePresence>
@@ -488,6 +495,7 @@ function CompressorView() {
     const pollRef = useRef<number | null>(null);
     const dropHandledRef = useRef(false);
     const [dropWarning, setDropWarning] = useState<string | null>(null);
+    const [compressTaskId, setCompressTaskId] = useState<string | null>(null);
 
     const presetOptions = [
         { id: 'high', label: 'Alta', description: 'Mejor calidad, menos compresion' },
@@ -575,6 +583,7 @@ function CompressorView() {
 
         try {
             const response = await startCompression(inputPath, outputDir, outputFormat, preset, gpuEnabled);
+            setCompressTaskId(response.task_id);
             if (pollRef.current) {
                 window.clearInterval(pollRef.current);
             }
@@ -618,6 +627,10 @@ function CompressorView() {
             .then((data) => {
                 if (!active) return;
                 setEncoderInfo({ available: data.available, best: data.best });
+                if (data.available) {
+                    setGpuEnabled(true);
+                    setCompressionUseGpu(true);
+                }
             })
             .catch(() => {
                 if (!active) return;
@@ -1020,6 +1033,20 @@ function CompressorView() {
                                 <FolderOpen size={18} />
                             </button>
                         )}
+                        {isCompressing && compressTaskId && (
+                            <button
+                                onClick={() => {
+                                    cancelCompression(compressTaskId).catch(() => { });
+                                    setIsCompressing(false);
+                                    setTask(null);
+                                    setCompressTaskId(null);
+                                }}
+                                className="history-action is-remove"
+                                title="Cancelar"
+                            >
+                                <X size={18} />
+                            </button>
+                        )}
                         <motion.button
                             whileHover={{ scale: 1.02 }}
                             whileTap={{ scale: 0.98 }}
@@ -1045,50 +1072,6 @@ function CompressorView() {
                     </div>
                 )}
 
-                {filteredHistory.length > 0 && (
-                    <div className="mt-8">
-                        <h4 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest mb-5">
-                            Conversiones recientes
-                        </h4>
-                        <div className="history-list">
-                            <AnimatePresence mode="popLayout">
-                                {filteredHistory.map((entry) => (
-                                    <motion.div
-                                        key={entry.id}
-                                        layout
-                                        initial={{ opacity: 0, y: 8 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, x: -20 }}
-                                        className="list-item"
-                                    >
-                                        <div className="list-thumb w-20 aspect-video rounded-xl overflow-hidden shrink-0 flex items-center justify-center">
-                                            {getMediaIcon(entry.media_type)}
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <h4 className="text-[15px] font-medium text-zinc-200 truncate mb-1">{entry.title}</h4>
-                                            <div className="flex items-center gap-3 text-sm text-zinc-500">
-                                                <span className="tag-chip">{entry.format.toUpperCase()}</span>
-                                                <span className="text-zinc-600">•</span>
-                                                <span>{new Date(entry.completed_at).toLocaleDateString()}</span>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <button onClick={() => handleOpenFile(entry.output_path)} className="history-action is-play">
-                                                <Play size={18} />
-                                            </button>
-                                            <button onClick={() => handleOpenFolder(entry.output_path)} className="history-action is-folder">
-                                                <FolderOpen size={18} />
-                                            </button>
-                                            <button onClick={() => removeConvertHistory(entry.id)} className="history-action is-remove">
-                                                <Trash2 size={18} />
-                                            </button>
-                                        </div>
-                                    </motion.div>
-                                ))}
-                            </AnimatePresence>
-                        </div>
-                    </div>
-                )}
             </div>
         </motion.div>
     );
@@ -1123,6 +1106,7 @@ function ConvertView() {
     const [videoInfo, setVideoInfo] = useState<{ duration: number | null; size: number | null; bit_rate: number | null } | null>(null);
     const [audioInfo, setAudioInfo] = useState<{ duration: number | null; size: number | null; bit_rate: number | null } | null>(null);
     const [imageInfo, setImageInfo] = useState<{ duration: number | null; size: number | null; bit_rate: number | null } | null>(null);
+    const [convertTaskId, setConvertTaskId] = useState<string | null>(null);
 
     const getFileName = (value: string) => {
         if (!value) return 'Selecciona un archivo';
@@ -1230,6 +1214,7 @@ function ConvertView() {
                 type,
                 quality
             );
+            setConvertTaskId(response.task_id);
             subscribeToConvertEvents(
                 response.task_id,
                 (data) => {
@@ -1520,6 +1505,90 @@ function ConvertView() {
                         <div className="progress-meta">
                             <span>{Math.round(task.progress || 0)}%</span>
                             <span>{task.status}</span>
+                            {isConverting && convertTaskId && (
+                                <button
+                                    onClick={() => {
+                                        cancelConvert(convertTaskId).catch(() => { });
+                                        setIsConverting(false);
+                                        setTask(null);
+                                        setConvertTaskId(null);
+                                    }}
+                                    className="history-action is-remove ml-2"
+                                    title="Cancelar"
+                                >
+                                    <X size={16} />
+                                </button>
+                            )}
+                        </div>
+                        {task.status !== 'completed' && task.status !== 'error' && (
+                            <div className="mt-3 px-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-sm text-zinc-400">Convirtiendo:</span>
+                                    <span className="text-sm font-medium text-zinc-200 truncate">
+                                        {convertTab === 'video' ? getFileName(videoInput) :
+                                            convertTab === 'audio' ? getFileName(audioInput) :
+                                                getFileName(imageInput)}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2 text-sm">
+                                    <span className="tag-chip">
+                                        {convertTab === 'video' ? videoInput.split('.').pop()?.toUpperCase() :
+                                            convertTab === 'audio' ? audioInput.split('.').pop()?.toUpperCase() :
+                                                imageInput.split('.').pop()?.toUpperCase()}
+                                    </span>
+                                    <span className="text-zinc-500">→</span>
+                                    <span className="tag-chip">
+                                        {convertTab === 'video' ? convertVideoFormat.toUpperCase() :
+                                            convertTab === 'audio' ? convertAudioFormat.toUpperCase() :
+                                                convertImageFormat.toUpperCase()}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {filteredHistory.length > 0 && (
+                    <div className="mt-8">
+                        <h4 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest mb-5">
+                            Conversiones recientes
+                        </h4>
+                        <div className="history-list">
+                            <AnimatePresence mode="popLayout">
+                                {filteredHistory.map((entry) => (
+                                    <motion.div
+                                        key={entry.id}
+                                        layout
+                                        initial={{ opacity: 0, y: 8 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, x: -20 }}
+                                        className="list-item"
+                                    >
+                                        <div className="list-thumb w-20 aspect-video rounded-xl overflow-hidden shrink-0 flex items-center justify-center">
+                                            {getMediaIcon(entry.media_type)}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <h4 className="text-[15px] font-medium text-zinc-200 truncate mb-1">{entry.title}</h4>
+                                            <div className="flex items-center gap-3 text-sm text-zinc-500">
+                                                <span className="tag-chip">{entry.format.toUpperCase()}</span>
+                                                <span className="text-zinc-600">•</span>
+                                                <span>{new Date(entry.completed_at).toLocaleDateString()}</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button onClick={() => handleOpenFile(entry.output_path)} className="history-action is-play">
+                                                <Play size={18} />
+                                            </button>
+                                            <button onClick={() => handleOpenFolder(entry.output_path)} className="history-action is-folder">
+                                                <FolderOpen size={18} />
+                                            </button>
+                                            <button onClick={() => removeConvertHistory(entry.id)} className="history-action is-remove">
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    </motion.div>
+                                ))}
+                            </AnimatePresence>
                         </div>
                     </div>
                 )}
@@ -1637,9 +1706,10 @@ function HistoryView() {
     );
 }
 
-function DownloadItem({ task, onOpenFile, onOpenFolder, onRemove }: any) {
+function DownloadItem({ task, onOpenFile, onOpenFolder, onRemove, onCancel }: any) {
     const isCompleted = task.status === 'completed';
     const isError = task.status === 'error';
+    const isDownloading = task.status === 'downloading';
 
     return (
         <motion.div
@@ -1649,7 +1719,7 @@ function DownloadItem({ task, onOpenFile, onOpenFolder, onRemove }: any) {
             exit={{ opacity: 0, x: -20 }}
             className="list-item relative overflow-hidden"
         >
-            {task.status === 'downloading' && (
+            {isDownloading && (
                 <div
                     className="absolute left-0 top-0 bottom-0 bg-violet-600/10 transition-all duration-300"
                     style={{ width: `${task.progress}%` }}
@@ -1666,7 +1736,7 @@ function DownloadItem({ task, onOpenFile, onOpenFolder, onRemove }: any) {
                     <h4 className="text-[15px] font-medium text-white truncate">{task.title || 'Cargando...'}</h4>
                 </div>
                 <div className="text-sm text-zinc-400">
-                    {task.status === 'downloading' ? (
+                    {isDownloading ? (
                         <span>{task.speed} • ETA: {task.eta} • {Math.round(task.progress)}%</span>
                     ) : (
                         <span className={isCompleted ? 'text-green-400' : isError ? 'text-red-400' : ''}>
@@ -1677,6 +1747,11 @@ function DownloadItem({ task, onOpenFile, onOpenFolder, onRemove }: any) {
             </div>
 
             <div className="relative z-10 flex items-center gap-2">
+                {isDownloading && onCancel && (
+                    <button onClick={onCancel} className="history-action" title="Cancelar">
+                        <X size={18} />
+                    </button>
+                )}
                 {isCompleted && (
                     <>
                         <button onClick={onOpenFile} className="history-action is-play">

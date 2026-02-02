@@ -3,6 +3,7 @@ directories:
   buildResources: build
 appId: com.gravitydown.app
 productName: GravityDown
+artifactName: ${productName}-${version}.${ext}
 extraResources:
   - from: ../backend/dist/gravitydown-engine.exe
     to: backend/gravitydown-engine.exe
@@ -21,8 +22,13 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  artifactName: ${productName}-Setup-${version}.${ext}
 files:
   - filter:
       - dist/**/*
       - electron/**/*
+publish:
+  - provider: github
+    owner: MatLumber
+    repo: Mi-Downloader
 electronVersion: 40.1.0

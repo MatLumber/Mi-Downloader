@@ -268,14 +268,48 @@ export function subscribeToConvertEvents(
 
 export async function getTaskStatus(taskId: string): Promise<TaskStatusResponse> {
     const response = await fetch(`${API_BASE}/status/${taskId}`);
-
     if (!response.ok) {
         const error = await response.json();
         throw new Error(error.detail || 'Failed to get task status');
     }
-
     return response.json();
 }
+
+export async function cancelDownload(taskId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/cancel/${taskId}`, {
+        method: 'DELETE',
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to cancel download');
+    }
+}
+
+export async function cancelCompression(taskId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/compress/cancel/${taskId}`, {
+        method: 'DELETE',
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to cancel compression');
+    }
+}
+
+export async function cancelConvert(taskId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/convert/cancel/${taskId}`, {
+        method: 'DELETE',
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to cancel conversion');
+    }
+}
+
+
+
 
 export function subscribeToTaskEvents(
     taskId: string,
