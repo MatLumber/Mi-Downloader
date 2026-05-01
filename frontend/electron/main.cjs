@@ -185,6 +185,46 @@ function createWindow() {
     event.preventDefault();
   });
 
+  // Use webRequest API to intercept file:// URLs from drag-and-drop
+  // This is more reliable than will-navigate in newer Electron versions
+  session.webRequest.onBeforeRequest({ urls: ['file://*'] }, (details, callback) => {
+    try {
+      const url = new URL(details.url);
+      let filePath = decodeURIComponent(url.pathname || '');
+
+      // Fix Windows paths (remove leading slash from /C:/path)
+      if (process.platform === 'win32' && filePath.startsWith('/')) {
+        filePath = filePath.slice(1);
+      }
+
+      // Clean up the path
+      filePath = filePath.replace(/\r?\n/g, '').replace(/\r/g, '');
+
+      const normalizedFilePath = path.normalize(filePath);
+      const appRoot = path.normalize(path.join(__dirname, '../dist'));
+      const isAppFile = normalizedFilePath.startsWith(appRoot) || normalizedFilePath.includes('app.asar');
+
+      // Allow the app's own files (HTML, JS, CSS, assets)
+      if (isAppFile) {
+        callback({ cancel: false });
+        return;
+      }
+
+      // Forward any media file (video, audio, image) — let the renderer filter by current screen
+      const mediaExtensions = /\.(mp4|mkv|webm|avi|mov|m4v|mp3|aac|wav|flac|ogg|opus|m4a|png|jpe?g|webp|bmp|tiff?)$/i;
+      if (mediaExtensions.test(filePath) && mainWindow) {
+        console.log('[Main] File drop via webRequest:', filePath);
+        mainWindow.webContents.send('file-drop', filePath);
+      }
+
+      // Cancel navigation to dropped files
+      callback({ cancel: true });
+    } catch (error) {
+      console.error('[Main] Error parsing file URL in webRequest:', error);
+      callback({ cancel: false });
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -303,23 +343,32 @@ ipcMain.handle('select-directory', async () => {
   }
 });
 
+const FILE_KIND_FILTERS = {
+  video: { name: 'Videos', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v'] },
+  audio: { name: 'Audios', extensions: ['mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a'] },
+  media: { name: 'Audio y Video', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v', 'mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a'] },
+  image: { name: 'Imagenes', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'tif'] },
+  any: { name: 'Archivos', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v', 'mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'tif'] },
+};
+
 ipcMain.handle('select-file', async (_, kind = 'video') => {
-  const filtersByKind = {
-    video: { name: 'Videos', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v'] },
-    audio: { name: 'Audios', extensions: ['mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a'] },
-    media: { name: 'Audio y Video', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v', 'mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a'] },
-    image: { name: 'Imagenes', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'tif'] },
-    any: { name: 'Archivos', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v', 'mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'tif'] },
-  };
-  const filter = filtersByKind[kind] || filtersByKind.video;
+  const filter = FILE_KIND_FILTERS[kind] || FILE_KIND_FILTERS.video;
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [filter]
   });
-  if (result.canceled) {
-    return null;
-  }
+  if (result.canceled) return null;
   return result.filePaths[0];
+});
+
+ipcMain.handle('select-files', async (_, kind = 'video') => {
+  const filter = FILE_KIND_FILTERS[kind] || FILE_KIND_FILTERS.video;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [filter]
+  });
+  if (result.canceled) return [];
+  return result.filePaths;
 });
 
 ipcMain.on('file-drop', (_, filePath) => {

@@ -1,6 +1,14 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export interface PlaylistEntry {
+    id: string;
+    title: string;
+    url: string;
+    thumbnail: string | null;
+    duration: number | null;
+}
+
 export interface VideoInfo {
     id: string;
     title: string;
@@ -10,6 +18,9 @@ export interface VideoInfo {
     view_count: number | null;
     platform?: string;
     formats: Format[];
+    is_playlist?: boolean;
+    playlist_count?: number;
+    entries?: PlaylistEntry[];
 }
 
 export interface Format {
@@ -23,6 +34,8 @@ export interface Format {
 }
 
 export type DownloadStatus = 'queued' | 'fetching_info' | 'downloading' | 'processing' | 'completed' | 'error' | 'cancelled';
+
+export type CookiesBrowser = 'chrome' | 'firefox' | 'edge' | 'brave' | 'opera' | 'vivaldi' | 'chromium' | 'safari';
 
 export interface DownloadTask {
     task_id: string;
@@ -40,6 +53,14 @@ export interface DownloadTask {
     error: string | null;
     started_at: Date;
     filesize: number | null;
+    /** Source URL — kept so the user can retry the same download with new options (e.g. cookies). */
+    source_url?: string;
+    /** Whether this task was launched with browser cookies. */
+    used_cookies?: boolean;
+    /** Audio bitrate used (audio downloads only). */
+    audio_quality?: string;
+    /** Output container/format. */
+    output_format?: string;
 }
 
 export interface CompletedDownload {
@@ -65,6 +86,19 @@ export interface ConvertHistoryItem {
     completed_at: Date;
 }
 
+export interface CompressionHistoryItem {
+    id: string;
+    title: string;
+    input_path: string;
+    output_path: string;
+    format: string;
+    preset: 'high' | 'balanced' | 'light';
+    used_gpu: boolean;
+    input_size: number | null;
+    output_size: number | null;
+    completed_at: Date;
+}
+
 export type LogLevel = 'info' | 'success' | 'warning' | 'error';
 
 export interface LogEntry {
@@ -74,11 +108,36 @@ export interface LogEntry {
     message: string;
 }
 
-export type ActiveTab = 'queue' | 'history' | 'compress' | 'convert' | 'terminal';
+export type ActiveTab = 'queue' | 'history' | 'compress' | 'convert' | 'terminal' | 'settings';
 export type ConvertTab = 'video' | 'audio' | 'image';
+export type SortDir = 'newest' | 'oldest' | 'a-z' | 'z-a';
+export type HistoryKind = 'all' | 'video' | 'audio';
+export type FileQueueStatus = 'pending' | 'processing' | 'completed' | 'error' | 'cancelled';
+
+export interface CompressQueueFile {
+    id: string;
+    path: string;
+    size: number | null;
+    status: FileQueueStatus;
+    progress: number;
+    error: string | null;
+    output_path?: string;
+    output_size?: number | null;
+}
+
+export interface ConvertQueueFile {
+    id: string;
+    path: string;
+    size: number | null;
+    duration: number | null;
+    status: FileQueueStatus;
+    progress: number;
+    error: string | null;
+    output_path?: string;
+}
 
 const readStoredTheme = (): 'dark' | 'light' => {
-    if (typeof window === 'undefined') return 'dark';
+    if (typeof window === 'undefined') return 'light';
     try {
         const stored = window.localStorage.getItem('gravitydown-theme');
         if (stored === 'light' || stored === 'dark') {
@@ -95,7 +154,7 @@ const readStoredTheme = (): 'dark' | 'light' => {
     } catch {
         // ignore
     }
-    return 'dark';
+    return 'light';
 };
 
 const writeStoredTheme = (theme: 'dark' | 'light') => {
@@ -152,6 +211,27 @@ interface AppState {
     removeConvertHistory: (id: string) => void;
     clearConvertHistory: (mediaType?: ConvertTab) => void;
 
+    // Compression History
+    compressionHistory: CompressionHistoryItem[];
+    addCompressionHistory: (entry: CompressionHistoryItem) => void;
+    removeCompressionHistory: (id: string) => void;
+    clearCompressionHistory: () => void;
+
+    // Persisted queues (survive app restart)
+    compressQueue: CompressQueueFile[];
+    addCompressFiles: (paths: string[]) => void;
+    updateCompressFile: (id: string, updates: Partial<CompressQueueFile>) => void;
+    removeCompressFile: (id: string) => void;
+    clearCompletedCompressFiles: () => void;
+    clearCompressQueue: () => void;
+
+    convertQueue: ConvertQueueFile[];
+    addConvertFiles: (paths: string[]) => void;
+    updateConvertFile: (id: string, updates: Partial<ConvertQueueFile>) => void;
+    removeConvertFile: (id: string) => void;
+    clearCompletedConvertFiles: () => void;
+    clearConvertQueue: () => void;
+
     // Active Panel Tab
     activeTab: ActiveTab;
     setActiveTab: (tab: ActiveTab) => void;
@@ -200,6 +280,20 @@ interface AppState {
     setCompressionUseGpu: (enabled: boolean) => void;
     compressionOutputDir: string;
     setCompressionOutputDir: (path: string) => void;
+
+    // History filters & search
+    historyKind: HistoryKind;
+    setHistoryKind: (kind: HistoryKind) => void;
+    historySort: SortDir;
+    setHistorySort: (sort: SortDir) => void;
+    historySearch: string;
+    setHistorySearch: (search: string) => void;
+
+    // Browser cookies (for age-restricted / private content)
+    useBrowserCookies: boolean;
+    setUseBrowserCookies: (value: boolean) => void;
+    cookiesBrowser: CookiesBrowser;
+    setCookiesBrowser: (browser: CookiesBrowser) => void;
 
     // Legacy compatibility
     currentTask: DownloadTask | null;
@@ -329,6 +423,71 @@ export const useAppStore = create<AppState>()(
                     : []
             })),
 
+            // Compression History
+            compressionHistory: [],
+            addCompressionHistory: (entry) => set((state) => ({
+                compressionHistory: [entry, ...state.compressionHistory].slice(0, 50)
+            })),
+            removeCompressionHistory: (id) => set((state) => ({
+                compressionHistory: state.compressionHistory.filter((e) => e.id !== id)
+            })),
+            clearCompressionHistory: () => set({ compressionHistory: [] }),
+
+            // Compress queue (persisted)
+            compressQueue: [],
+            addCompressFiles: (paths) => set((state) => {
+                const existing = new Set(state.compressQueue.map((f) => f.path.toLowerCase()));
+                const additions = paths
+                    .filter((p) => !existing.has(p.toLowerCase()))
+                    .map<CompressQueueFile>((p) => ({
+                        id: crypto.randomUUID(),
+                        path: p,
+                        size: null,
+                        status: 'pending',
+                        progress: 0,
+                        error: null,
+                    }));
+                return { compressQueue: [...state.compressQueue, ...additions] };
+            }),
+            updateCompressFile: (id, updates) => set((state) => ({
+                compressQueue: state.compressQueue.map((f) => (f.id === id ? { ...f, ...updates } : f)),
+            })),
+            removeCompressFile: (id) => set((state) => ({
+                compressQueue: state.compressQueue.filter((f) => f.id !== id),
+            })),
+            clearCompletedCompressFiles: () => set((state) => ({
+                compressQueue: state.compressQueue.filter((f) => f.status !== 'completed'),
+            })),
+            clearCompressQueue: () => set({ compressQueue: [] }),
+
+            // Convert queue (persisted)
+            convertQueue: [],
+            addConvertFiles: (paths) => set((state) => {
+                const existing = new Set(state.convertQueue.map((f) => f.path.toLowerCase()));
+                const additions = paths
+                    .filter((p) => !existing.has(p.toLowerCase()))
+                    .map<ConvertQueueFile>((p) => ({
+                        id: crypto.randomUUID(),
+                        path: p,
+                        size: null,
+                        duration: null,
+                        status: 'pending',
+                        progress: 0,
+                        error: null,
+                    }));
+                return { convertQueue: [...state.convertQueue, ...additions] };
+            }),
+            updateConvertFile: (id, updates) => set((state) => ({
+                convertQueue: state.convertQueue.map((f) => (f.id === id ? { ...f, ...updates } : f)),
+            })),
+            removeConvertFile: (id) => set((state) => ({
+                convertQueue: state.convertQueue.filter((f) => f.id !== id),
+            })),
+            clearCompletedConvertFiles: () => set((state) => ({
+                convertQueue: state.convertQueue.filter((f) => f.status !== 'completed'),
+            })),
+            clearConvertQueue: () => set({ convertQueue: [] }),
+
             // Active Tab
             activeTab: 'queue',
             setActiveTab: (tab) => set({ activeTab: tab }),
@@ -389,6 +548,20 @@ export const useAppStore = create<AppState>()(
             compressionOutputDir: '~/Downloads/GravityDown',
             setCompressionOutputDir: (path) => set({ compressionOutputDir: path }),
 
+            // History filters & search
+            historyKind: 'all',
+            setHistoryKind: (kind) => set({ historyKind: kind }),
+            historySort: 'newest',
+            setHistorySort: (sort) => set({ historySort: sort }),
+            historySearch: '',
+            setHistorySearch: (search) => set({ historySearch: search }),
+
+            // Browser cookies
+            useBrowserCookies: false,
+            setUseBrowserCookies: (value) => set({ useBrowserCookies: value }),
+            cookiesBrowser: 'chrome',
+            setCookiesBrowser: (browser) => set({ cookiesBrowser: browser }),
+
             // Legacy compatibility - maps to first active download
             currentTask: null,
             setCurrentTask: (task) => {
@@ -413,6 +586,8 @@ export const useAppStore = create<AppState>()(
                 videoHistory: state.videoHistory,
                 audioHistory: state.audioHistory,
                 downloadPath: state.downloadPath,
+                convertHistory: state.convertHistory,
+                compressionHistory: state.compressionHistory,
                 videoFormat: state.videoFormat,
                 audioFormat: state.audioFormat,
                 audioQuality: state.audioQuality,
@@ -429,22 +604,73 @@ export const useAppStore = create<AppState>()(
                 compressionUseGpu: state.compressionUseGpu,
                 compressionOutputDir: state.compressionOutputDir,
                 theme: state.theme,
+                historyKind: state.historyKind,
+                historySort: state.historySort,
+                useBrowserCookies: state.useBrowserCookies,
+                cookiesBrowser: state.cookiesBrowser,
+                compressQueue: state.compressQueue,
+                convertQueue: state.convertQueue,
+                downloadQueue: state.downloadQueue,
             }),
             // Handle date deserialization
             onRehydrateStorage: () => (state) => {
-                if (state) {
-                    // Convert date strings back to Date objects
-                    state.videoHistory = state.videoHistory.map(item => ({
+                if (!state) return;
+
+                state.videoHistory = state.videoHistory.map(item => ({
+                    ...item,
+                    completed_at: new Date(item.completed_at)
+                }));
+                state.audioHistory = state.audioHistory.map(item => ({
+                    ...item,
+                    completed_at: new Date(item.completed_at)
+                }));
+                if (state.convertHistory) {
+                    state.convertHistory = state.convertHistory.map(item => ({
                         ...item,
                         completed_at: new Date(item.completed_at)
                     }));
-                    state.audioHistory = state.audioHistory.map(item => ({
+                }
+                if (state.compressionHistory) {
+                    state.compressionHistory = state.compressionHistory.map(item => ({
                         ...item,
                         completed_at: new Date(item.completed_at)
                     }));
-                    if (state.theme) {
-                        writeStoredTheme(state.theme);
+                }
+
+                // Sanitize queues: any item that was 'processing' when the app closed is now stale.
+                // The backend died with the renderer, so we mark it as cancelled with an explanation.
+                const sanitizeQueueItem = <T extends { status: FileQueueStatus; error: string | null; progress: number }>(item: T): T => {
+                    if (item.status === 'processing') {
+                        return { ...item, status: 'pending', progress: 0, error: null };
                     }
+                    return item;
+                };
+
+                if (state.compressQueue) {
+                    state.compressQueue = state.compressQueue.map(sanitizeQueueItem);
+                }
+                if (state.convertQueue) {
+                    state.convertQueue = state.convertQueue.map(sanitizeQueueItem);
+                }
+                if (state.downloadQueue) {
+                    // For downloads: pending/queued/fetching/downloading/processing become 'cancelled'
+                    // because the backend task ID is no longer valid. Completed and error are kept.
+                    state.downloadQueue = state.downloadQueue.map((task) => {
+                        const liveStates: DownloadStatus[] = ['queued', 'fetching_info', 'downloading', 'processing'];
+                        if (liveStates.includes(task.status)) {
+                            return {
+                                ...task,
+                                status: 'cancelled' as DownloadStatus,
+                                error: 'Interrumpida al cerrar el programa.',
+                                started_at: new Date(task.started_at),
+                            };
+                        }
+                        return { ...task, started_at: new Date(task.started_at) };
+                    });
+                }
+
+                if (state.theme) {
+                    writeStoredTheme(state.theme);
                 }
             }
         }

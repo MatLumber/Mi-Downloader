@@ -77,6 +77,14 @@ class CompressionTask:
 
 # ============ Pydantic Models ============
 
+class PlaylistEntry(BaseModel):
+    id: str
+    title: str
+    url: str
+    thumbnail: Optional[str] = None
+    duration: Optional[int] = None
+
+
 class VideoInfoResponse(BaseModel):
     id: str
     title: str
@@ -86,6 +94,9 @@ class VideoInfoResponse(BaseModel):
     view_count: Optional[int]
     platform: Optional[str] = "other"
     formats: list
+    is_playlist: bool = False
+    playlist_count: int = 0
+    entries: list = []
 
 
 class DownloadRequest(BaseModel):
@@ -95,6 +106,8 @@ class DownloadRequest(BaseModel):
     output_path: Optional[str] = None
     output_format: Optional[str] = None  # mp4, mkv, avi, webm, mp3, wav, flac
     audio_quality: Optional[str] = None  # 320, 256, 192, 128
+    use_cookies: Optional[bool] = False
+    cookies_browser: Optional[str] = None  # chrome, firefox, edge, brave, opera, vivaldi, chromium, safari
 
 
 class DownloadResponse(BaseModel):
@@ -844,9 +857,11 @@ async def start_download(request: DownloadRequest):
             quality=request.quality,
             output_path=request.output_path,
             output_format=request.output_format,
-            audio_quality=request.audio_quality
+            audio_quality=request.audio_quality,
+            use_cookies=bool(request.use_cookies),
+            cookies_browser=request.cookies_browser,
         )
-        
+
         return DownloadResponse(
             task_id=task_id,
             status="started",
@@ -1194,6 +1209,73 @@ async def get_local_info(path: str = Query(..., description="Local file path")):
 
     info = _get_local_info(input_path)
     return LocalInfoResponse(**info)
+
+
+_VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v"}
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif"}
+
+
+@app.get("/local-thumbnail")
+async def get_local_thumbnail(path: str = Query(..., description="Local video or image path")):
+    """Generate a JPEG thumbnail from a local video frame or image. Audio files return 404."""
+    input_path = _expand_path(path)
+    if not os.path.isfile(input_path):
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    ext = os.path.splitext(input_path)[1].lower()
+    if ext not in _VIDEO_EXTS and ext not in _IMAGE_EXTS:
+        raise HTTPException(status_code=415, detail="Tipo no soportado para thumbnail")
+
+    ffmpeg = _find_binary("ffmpeg.exe", "FFMPEG_PATH") or _find_binary("ffmpeg", "FFMPEG_PATH")
+    if not ffmpeg:
+        raise HTTPException(status_code=500, detail="ffmpeg no disponible")
+
+    if ext in _IMAGE_EXTS:
+        # For images, just decode + scale + re-encode as JPEG.
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-i", input_path,
+            "-vf", "scale='min(480,iw)':-2:flags=lanczos",
+            "-frames:v", "1",
+            "-f", "image2",
+            "-vcodec", "mjpeg",
+            "-q:v", "5",
+            "pipe:1",
+        ]
+    else:
+        # For videos, seek to ~10% in (clamped) and grab a single frame.
+        duration_ms = _get_duration_ms(input_path)
+        if duration_ms and duration_ms > 0:
+            seek_seconds = max(1.0, min((duration_ms / 1000.0) * 0.1, 60.0))
+        else:
+            seek_seconds = 2.0
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-ss", f"{seek_seconds:.2f}",
+            "-i", input_path,
+            "-frames:v", "1",
+            "-vf", "scale='min(480,iw)':-2",
+            "-f", "image2",
+            "-vcodec", "mjpeg",
+            "-q:v", "5",
+            "pipe:1",
+        ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=15)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    if result.returncode != 0 or not result.stdout:
+        raise HTTPException(status_code=500, detail="No se pudo generar el thumbnail")
+
+    return Response(
+        content=result.stdout,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 # ============ Run Server ============

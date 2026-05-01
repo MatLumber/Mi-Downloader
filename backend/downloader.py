@@ -181,30 +181,83 @@ class DownloadManager:
             self._callbacks[task_id](task)
     
     def get_video_info(self, url: str) -> Dict[str, Any]:
-        """Fetch video metadata without downloading."""
+        """Fetch video or playlist metadata without downloading."""
         url = self._normalize_url(url)
+        is_playlist_url = ("list=" in url) or ("/playlist" in url)
+        platform = self._detect_platform(url)
+
+        # For playlists we use extract_flat='in_playlist' to get all entries fast
+        # without resolving each video's full format ladder.
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
-            "extract_flat": False,
+            "extract_flat": "in_playlist" if is_playlist_url else False,
+            "skip_download": True,
         }
-        
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            
+
             if not info:
                 raise ValueError("Could not extract video info")
-            
-            # Extract available formats
+
+            is_playlist = info.get("_type") == "playlist" or bool(info.get("entries"))
+
+            if is_playlist:
+                raw_entries = info.get("entries") or []
+                entries = []
+                for entry in raw_entries:
+                    if not entry:
+                        continue
+                    eid = entry.get("id") or ""
+                    entry_url = (
+                        entry.get("webpage_url")
+                        or entry.get("url")
+                        or (f"https://www.youtube.com/watch?v={eid}" if eid and platform == "youtube" else "")
+                    )
+                    if not entry_url:
+                        continue
+                    duration = entry.get("duration")
+                    if isinstance(duration, float):
+                        duration = int(duration)
+                    thumbnail = entry.get("thumbnail")
+                    if not thumbnail and platform == "youtube" and eid:
+                        thumbnail = f"https://i.ytimg.com/vi/{eid}/hqdefault.jpg"
+                    entries.append({
+                        "id": eid,
+                        "title": entry.get("title") or "Sin título",
+                        "url": entry_url,
+                        "thumbnail": thumbnail,
+                        "duration": duration,
+                    })
+
+                playlist_thumb = info.get("thumbnail")
+                if not playlist_thumb and entries:
+                    playlist_thumb = entries[0].get("thumbnail")
+
+                return {
+                    "id": info.get("id") or "",
+                    "title": info.get("title") or "Playlist",
+                    "thumbnail": playlist_thumb,
+                    "duration": None,
+                    "channel": info.get("channel") or info.get("uploader"),
+                    "view_count": None,
+                    "platform": platform,
+                    "formats": [],
+                    "is_playlist": True,
+                    "playlist_count": len(entries),
+                    "entries": entries,
+                }
+
+            # Single video — extract format ladder
             formats = []
             seen_resolutions = set()
-            
+
             for f in info.get("formats", []):
                 height = f.get("height")
                 vcodec = f.get("vcodec", "none")
                 acodec = f.get("acodec", "none")
-                
-                # Video formats
+
                 if height and vcodec != "none":
                     resolution = f"{height}p"
                     if resolution not in seen_resolutions:
@@ -218,10 +271,9 @@ class DownloadManager:
                             "has_audio": acodec != "none",
                             "filesize": f.get("filesize") or f.get("filesize_approx"),
                         })
-            
-            # Sort by resolution (descending)
+
             formats.sort(key=lambda x: x.get("height", 0), reverse=True)
-            
+
             duration = info.get("duration")
             if isinstance(duration, float):
                 duration = int(duration)
@@ -233,8 +285,11 @@ class DownloadManager:
                 "duration": duration,
                 "channel": info.get("channel") or info.get("uploader"),
                 "view_count": info.get("view_count"),
-                "platform": self._detect_platform(url),
+                "platform": platform,
                 "formats": formats,
+                "is_playlist": False,
+                "playlist_count": 0,
+                "entries": [],
             }
             
     def _detect_platform(self, url: str) -> str:
@@ -261,28 +316,33 @@ class DownloadManager:
         output_path: Optional[str] = None,
         output_format: Optional[str] = None,  # mp4, mkv, avi, webm, mp3, wav, flac, aac, opus
         audio_quality: Optional[str] = None,  # 320, 256, 192, 128
+        use_cookies: bool = False,
+        cookies_browser: Optional[str] = None,
         callback: Optional[Callable[[DownloadTask], None]] = None
     ) -> str:
         """Start a download task and return task ID."""
         url = self._normalize_url(url)
         task_id = str(uuid.uuid4())[:8]
-        
+
         task = DownloadTask(
             task_id=task_id,
             url=url,
             status=DownloadStatus.PENDING
         )
-        
+
         with self._lock:
             self.tasks[task_id] = task
             if callback:
                 self._callbacks[task_id] = callback
-        
+
         # Submit to thread pool
-        self.executor.submit(self._download_worker, task_id, url, format_type, quality, output_path, output_format, audio_quality)
-        
+        self.executor.submit(
+            self._download_worker, task_id, url, format_type, quality,
+            output_path, output_format, audio_quality, use_cookies, cookies_browser,
+        )
+
         return task_id
-    
+
     def _download_worker(
         self,
         task_id: str,
@@ -291,7 +351,9 @@ class DownloadManager:
         quality: str,
         output_path: Optional[str] = None,
         output_format: Optional[str] = None,
-        audio_quality: Optional[str] = None
+        audio_quality: Optional[str] = None,
+        use_cookies: bool = False,
+        cookies_browser: Optional[str] = None,
     ) -> None:
         """Worker thread for downloading."""
         try:
@@ -392,11 +454,18 @@ class DownloadManager:
                 "no_warnings": True,
                 "merge_output_format": merge_format,
                 # We handle sanitization manually via explicit outtmpl
-                "restrictfilenames": False, 
+                "restrictfilenames": False,
             }
 
             if ffmpeg_location:
                 ydl_opts["ffmpeg_location"] = ffmpeg_location
+
+            # Browser cookies — used for age-restricted, members-only, or private-but-accessible content.
+            # yt-dlp expects a tuple: (browser_name, profile, keyring, container).
+            if use_cookies and cookies_browser:
+                browser = cookies_browser.lower().strip()
+                if browser in {"chrome", "firefox", "edge", "brave", "opera", "vivaldi", "chromium", "safari"}:
+                    ydl_opts["cookiesfrombrowser"] = (browser,)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)

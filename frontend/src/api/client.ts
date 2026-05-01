@@ -1,5 +1,13 @@
 export const API_BASE = 'http://127.0.0.1:8765';
 
+export interface PlaylistEntry {
+    id: string;
+    title: string;
+    url: string;
+    thumbnail: string | null;
+    duration: number | null;
+}
+
 export interface VideoInfoResponse {
     id: string;
     title: string;
@@ -17,6 +25,9 @@ export interface VideoInfoResponse {
         has_audio: boolean;
         filesize: number | null;
     }>;
+    is_playlist?: boolean;
+    playlist_count?: number;
+    entries?: PlaylistEntry[];
 }
 
 export interface DownloadResponse {
@@ -105,26 +116,32 @@ export async function fetchVideoInfo(url: string): Promise<VideoInfoResponse> {
     return response.json();
 }
 
-export async function startDownload(
-    url: string,
-    formatType: 'video' | 'audio',
-    quality: string,
-    outputPath?: string,
-    outputFormat?: string,
-    audioQuality?: string
-): Promise<DownloadResponse> {
+export interface StartDownloadOptions {
+    url: string;
+    formatType: 'video' | 'audio';
+    quality: string;
+    outputPath?: string;
+    outputFormat?: string;
+    audioQuality?: string;
+    useCookies?: boolean;
+    cookiesBrowser?: string | null;
+}
+
+export async function startDownload(opts: StartDownloadOptions): Promise<DownloadResponse> {
     const response = await fetch(`${API_BASE}/download`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-            url,
-            format_type: formatType,
-            quality,
-            output_path: outputPath,
-            output_format: outputFormat,
-            audio_quality: audioQuality
+            url: opts.url,
+            format_type: opts.formatType,
+            quality: opts.quality,
+            output_path: opts.outputPath,
+            output_format: opts.outputFormat,
+            audio_quality: opts.audioQuality,
+            use_cookies: opts.useCookies || false,
+            cookies_browser: opts.cookiesBrowser || null,
         }),
     });
 
@@ -134,6 +151,10 @@ export async function startDownload(
     }
 
     return response.json();
+}
+
+export function localThumbnailUrl(path: string): string {
+    return `${API_BASE}/local-thumbnail?path=${encodeURIComponent(path)}`;
 }
 
 export async function startCompression(
