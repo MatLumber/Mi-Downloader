@@ -37,4 +37,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('update-status', listener);
       return () => ipcRenderer.removeListener('update-status', listener);
     },
+
+    // Companion extension (Chrome cookies sync)
+    getCompanionExtensionInfo: () => ipcRenderer.invoke('companion-extension-info'),
+    exportCompanionExtension: () => ipcRenderer.invoke('companion-extension-export'),
 });

@@ -294,6 +294,10 @@ interface AppState {
     setUseBrowserCookies: (value: boolean) => void;
     cookiesBrowser: CookiesBrowser;
     setCookiesBrowser: (browser: CookiesBrowser) => void;
+    /** Path to a Netscape-format cookies.txt file. Takes precedence over browser
+     *  extraction — sidesteps the Chrome 127+ app-bound encryption bug entirely. */
+    cookiesFile: string | null;
+    setCookiesFile: (path: string | null) => void;
 
     // Legacy compatibility
     currentTask: DownloadTask | null;
@@ -366,7 +370,9 @@ export const useAppStore = create<AppState>()(
             // Download Queue
             downloadQueue: [],
             addToQueue: (task) => set((state) => ({
-                downloadQueue: [...state.downloadQueue, task]
+                // Prepend so the most recent download is at the top of the visible
+                // queue list — matches the user's expectation of newest-first ordering.
+                downloadQueue: [task, ...state.downloadQueue]
             })),
             updateTask: (taskId, updates) => set((state) => ({
                 downloadQueue: state.downloadQueue.map((task) =>
@@ -561,6 +567,8 @@ export const useAppStore = create<AppState>()(
             setUseBrowserCookies: (value) => set({ useBrowserCookies: value }),
             cookiesBrowser: 'chrome',
             setCookiesBrowser: (browser) => set({ cookiesBrowser: browser }),
+            cookiesFile: null,
+            setCookiesFile: (path) => set({ cookiesFile: path }),
 
             // Legacy compatibility - maps to first active download
             currentTask: null,
@@ -608,6 +616,7 @@ export const useAppStore = create<AppState>()(
                 historySort: state.historySort,
                 useBrowserCookies: state.useBrowserCookies,
                 cookiesBrowser: state.cookiesBrowser,
+                cookiesFile: state.cookiesFile,
                 compressQueue: state.compressQueue,
                 convertQueue: state.convertQueue,
                 downloadQueue: state.downloadQueue,

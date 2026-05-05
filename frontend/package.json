@@ -29,6 +29,10 @@
       {
         "from": "../backend/ffmpeg",
         "to": "ffmpeg"
+      },
+      {
+        "from": "companion-extension",
+        "to": "companion-extension"
       }
     ],
     "win": {

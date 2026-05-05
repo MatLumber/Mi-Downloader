@@ -14,7 +14,12 @@ export type ErrorCode =
     | 'rate_limited'
     | 'forbidden'
     | 'network'
+    | 'timeout'
     | 'extractor'
+    | 'no_formats'
+    | 'cookies_locked'
+    | 'cookies_decrypt'
+    | 'cookies_missing'
     | 'cancelled'
     | 'unknown';
 
@@ -27,6 +32,31 @@ export interface ParsedError {
 }
 
 const PATTERNS: Array<{ test: RegExp; code: ErrorCode; title: string; hint: string; canRetryWithCookies?: boolean }> = [
+    // Cookies extraction failures must be matched BEFORE any "retry with cookies" patterns,
+    // otherwise yt-dlp's cookie-DB errors get bucketed as "use cookies" and create a loop.
+    //
+    // ORDER MATTERS: yt-dlp uses the same wording ("Could not copy Chrome cookie database")
+    // for two very different problems — a real Windows file lock AND the Chrome 127+
+    // app-bound encryption bug. The decrypt case links to issue 7271; we match that
+    // signal first so users get the right hint (switch browser, not "close browser").
+    {
+        test: /yt-dlp\/yt-dlp\/issues\/7271|failed to decrypt with dpapi|failed to decrypt cookie|app[- ]?bound encryption|could not decrypt the cookie/i,
+        code: 'cookies_decrypt',
+        title: 'Cookies de Chrome cifradas — no se pueden leer',
+        hint: 'Chrome 127+ usa cifrado app-bound que yt-dlp aún no puede descifrar. Cambia a Firefox o Edge en Ajustes de cookies (con sesión iniciada en YouTube en ese navegador).',
+    },
+    {
+        test: /WinError 32|being used by another process|cookies? database is locked|permission denied.*cookies/i,
+        code: 'cookies_locked',
+        title: 'No se pudo leer las cookies del navegador',
+        hint: 'Cierra completamente el navegador seleccionado (incluido el icono de la bandeja) y reintenta. Su base de datos de cookies queda bloqueada mientras está abierto.',
+    },
+    {
+        test: /could not find .* cookies? database|unable to find .* cookies? database|no .* cookies database found|profile .* not found/i,
+        code: 'cookies_missing',
+        title: 'No se encontró la base de cookies',
+        hint: 'El navegador seleccionado no tiene perfil instalado en este equipo. Elige otro navegador en Ajustes.',
+    },
     {
         test: /sign in to confirm your age|confirm your age|inappropriate for some users/i,
         code: 'age_restricted',
@@ -80,10 +110,22 @@ const PATTERNS: Array<{ test: RegExp; code: ErrorCode; title: string; hint: stri
         hint: 'No se pudo contactar el servidor. Revisa tu conexión a internet.',
     },
     {
+        test: /read operation timed out|timed out|timeout|connection reset by peer|incomplete read/i,
+        code: 'timeout',
+        title: 'Tiempo de espera agotado',
+        hint: 'La conexión se interrumpió durante la descarga. Reintenta — el reintento ahora retoma desde fragmentos limpios.',
+    },
+    {
         test: /unable to extract|extractor failed|unsupported url/i,
         code: 'extractor',
         title: 'Plataforma no soportada',
         hint: 'Esta URL no se puede procesar. Verifica que el enlace sea válido.',
+    },
+    {
+        test: /requested format is not available|no video formats found|no.*formats.*found|format selector returned no formats/i,
+        code: 'no_formats',
+        title: 'YouTube no devolvió formatos descargables',
+        hint: 'Antibloqueo de YouTube. La app reintenta con clientes alternativos automáticamente; si vuelve a fallar, asegúrate de que la extensión Companion esté sincronizando cookies frescas y reintenta.',
     },
     {
         test: /cancelled by user|cancelled/i,
@@ -128,7 +170,10 @@ export function parseError(raw: string | null | undefined): ParsedError {
         code: 'unknown',
         title: 'No se pudo descargar',
         hint: cleaned.length > 220 ? cleaned.slice(0, 220) + '…' : cleaned,
-        canRetryWithCookies: true,
+        // Unknown errors do NOT default to "retry with cookies": cookies fix specific
+        // auth/age/forbidden cases, not arbitrary failures. Showing the button by default
+        // produced loops where cookie-extraction errors offered to retry with cookies.
+        canRetryWithCookies: false,
         raw: text,
     };
 }

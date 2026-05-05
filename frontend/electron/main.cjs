@@ -349,6 +349,7 @@ const FILE_KIND_FILTERS = {
   media: { name: 'Audio y Video', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v', 'mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a'] },
   image: { name: 'Imagenes', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'tif'] },
   any: { name: 'Archivos', extensions: ['mp4', 'mkv', 'webm', 'avi', 'mov', 'm4v', 'mp3', 'aac', 'wav', 'flac', 'ogg', 'opus', 'm4a', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'tif'] },
+  cookies: { name: 'Cookies', extensions: ['txt'] },
 };
 
 ipcMain.handle('select-file', async (_, kind = 'video') => {
@@ -378,6 +379,68 @@ ipcMain.on('file-drop', (_, filePath) => {
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
+
+// Companion extension: export the bundled extension folder to a user-chosen
+// directory and open Explorer there. The user then loads it as unpacked in
+// chrome://extensions. The source folder lives next to package.json in dev,
+// and inside resources/companion-extension/ in the packaged app (because
+// extraResources copies it there at build time).
+function getCompanionExtensionSourceDir() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'companion-extension');
+  }
+  return path.join(__dirname, '..', 'companion-extension');
+}
+
+function copyDirRecursive(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const dstPath = path.join(dst, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, dstPath);
+    } else if (entry.isFile()) {
+      fs.copyFileSync(srcPath, dstPath);
+    }
+  }
+}
+
+ipcMain.handle('companion-extension-info', () => {
+  const src = getCompanionExtensionSourceDir();
+  const exists = fs.existsSync(src) && fs.existsSync(path.join(src, 'manifest.json'));
+  let version = null;
+  if (exists) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(src, 'manifest.json'), 'utf8'));
+      version = manifest.version || null;
+    } catch { /* manifest unreadable — keep version null */ }
+  }
+  return { exists, sourceDir: src, version };
+});
+
+ipcMain.handle('companion-extension-export', async () => {
+  const src = getCompanionExtensionSourceDir();
+  if (!fs.existsSync(src)) {
+    return { ok: false, reason: 'source_missing', sourceDir: src };
+  }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Selecciona dónde guardar la extensión Companion',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: path.join(app.getPath('documents'), 'GravityDown'),
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return { ok: false, reason: 'cancelled' };
+  }
+  const destBase = result.filePaths[0];
+  const dest = path.join(destBase, 'GravityDown-Companion');
+  try {
+    copyDirRecursive(src, dest);
+  } catch (err) {
+    return { ok: false, reason: 'copy_failed', message: String(err) };
+  }
+  shell.openPath(dest).catch(() => { /* best-effort open */ });
+  return { ok: true, path: dest };
+});
 
 ipcMain.handle('stat-file', async (_, filePath) => {
   try {

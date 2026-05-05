@@ -1,0 +1,42 @@
+GravityDown Companion — Instrucciones de instalación
+======================================================
+
+Esta extensión sincroniza las cookies de YouTube con la app GravityDown.
+Sólo necesita instalarse una vez. Después funciona automáticamente:
+sincroniza al abrir el navegador, cada 30 minutos, y al navegar a YouTube.
+
+Pasos para instalarla en Chrome / Edge / Brave / Vivaldi / Opera:
+----------------------------------------------------------------
+
+1. Abre tu navegador y ve a:
+   chrome://extensions       (o edge://extensions / brave://extensions)
+
+2. Activa el interruptor "Modo de desarrollador" en la esquina superior
+   derecha.
+
+3. Pulsa el botón "Cargar descomprimida" (Load unpacked) que aparece a
+   la izquierda.
+
+4. Selecciona ESTA carpeta (la que contiene este archivo LEEME.txt y
+   manifest.json).
+
+5. Listo. La extensión aparece en tu lista. Asegúrate de que GravityDown
+   esté abierta y haz clic en el icono de la extensión → "Sincronizar
+   ahora" para la primera sincronización.
+
+Verificación:
+-------------
+
+En la app GravityDown → Ajustes → "Extensión Companion", deberías ver
+"Sincronizado hace X — N cookies".
+
+Notas:
+------
+
+- Esta extensión sólo lee cookies de los dominios *.youtube.com y
+  *.google.com.
+- Los datos sólo se envían a 127.0.0.1:8765 (la app local en tu propia
+  máquina). No salen de tu equipo.
+- Si actualizas GravityDown, la extensión sigue funcionando — sólo
+  cambia su ubicación si la exportaste a otra carpeta. En ese caso
+  vuelve a re-cargarla desde la nueva ruta.

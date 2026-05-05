@@ -125,6 +125,7 @@ export interface StartDownloadOptions {
     audioQuality?: string;
     useCookies?: boolean;
     cookiesBrowser?: string | null;
+    cookiesFile?: string | null;
 }
 
 export async function startDownload(opts: StartDownloadOptions): Promise<DownloadResponse> {
@@ -142,6 +143,7 @@ export async function startDownload(opts: StartDownloadOptions): Promise<Downloa
             audio_quality: opts.audioQuality,
             use_cookies: opts.useCookies || false,
             cookies_browser: opts.cookiesBrowser || null,
+            cookies_file: opts.cookiesFile || null,
         }),
     });
 
@@ -155,6 +157,24 @@ export async function startDownload(opts: StartDownloadOptions): Promise<Downloa
 
 export function localThumbnailUrl(path: string): string {
     return `${API_BASE}/local-thumbnail?path=${encodeURIComponent(path)}`;
+}
+
+export interface CookiesSyncStatus {
+    exists: boolean;
+    path: string | null;
+    timestamp: string | null;
+    count: number;
+}
+
+export async function getCookiesSyncStatus(): Promise<CookiesSyncStatus> {
+    const response = await fetch(`${API_BASE}/cookies/sync-status`);
+    if (!response.ok) throw new Error('Failed to fetch cookies sync status');
+    return response.json();
+}
+
+export async function clearSyncedCookies(): Promise<void> {
+    const response = await fetch(`${API_BASE}/cookies/sync`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('Failed to clear synced cookies');
 }
 
 export async function startCompression(

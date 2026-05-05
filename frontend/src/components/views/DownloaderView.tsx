@@ -46,8 +46,8 @@ export function DownloaderView() {
         downloadQueue, addToQueue, updateTask, removeFromQueue,
         addToHistory,
         apiOnline,
-        useBrowserCookies, setUseBrowserCookies,
-        cookiesBrowser, setActiveTab,
+        useBrowserCookies,
+        cookiesBrowser, cookiesFile, setActiveTab,
     } = useAppStore();
 
     const [isDownloading, setIsDownloading] = useState(false);
@@ -97,6 +97,10 @@ export function DownloaderView() {
         const effectiveAudioBitrate = opts?.audioQualityOverride || audioQuality;
         const effectiveUseCookies = !!opts?.forceCookies || useBrowserCookies;
 
+        // A configured cookies.txt file overrides the browser source — yt-dlp reads
+        // the file and we never have to touch the browser's encrypted cookie DB.
+        const effectiveCookiesFile = effectiveUseCookies ? (cookiesFile || null) : null;
+
         startDownload({
             url: sourceUrl,
             formatType: effectiveFormat,
@@ -105,7 +109,8 @@ export function DownloaderView() {
             outputFormat,
             audioQuality: effectiveFormat === 'audio' ? effectiveAudioBitrate : undefined,
             useCookies: effectiveUseCookies,
-            cookiesBrowser: effectiveUseCookies ? cookiesBrowser : null,
+            cookiesBrowser: effectiveUseCookies && !effectiveCookiesFile ? cookiesBrowser : null,
+            cookiesFile: effectiveCookiesFile,
         }).then((response) => {
             const newTask: DownloadTask = {
                 task_id: response.task_id,
@@ -165,7 +170,7 @@ export function DownloaderView() {
             resolve();
         }).catch(reject);
     }), [
-        formatType, quality, audioQuality, downloadPath, useBrowserCookies, cookiesBrowser,
+        formatType, quality, audioQuality, downloadPath, useBrowserCookies, cookiesBrowser, cookiesFile,
         addToQueue, updateTask, addToHistory, toast, buildAbsolutePath,
     ]);
 
@@ -174,12 +179,9 @@ export function DownloaderView() {
             toast.push('error', 'No se puede reintentar', 'Falta la URL de origen.');
             return;
         }
-        if (!useBrowserCookies) {
-            // Auto-enable browser cookies so the next attempt is authenticated.
-            setUseBrowserCookies(true);
-            toast.push('info', 'Cookies activadas', `Usando cookies de ${cookiesBrowser}.`);
-        }
-        // Remove the failed task and create a new one
+        // Per-task cookies override only — we do NOT flip the global useBrowserCookies
+        // toggle. Doing so silently changed the user's preference for every future
+        // download, which is confusing. forceCookies enables cookies just for this attempt.
         removeFromQueue(task.task_id);
         enqueueDownload(
             task.source_url,
@@ -194,7 +196,32 @@ export function DownloaderView() {
                 audioQualityOverride: task.audio_quality,
             },
         ).catch((err) => toast.push('error', 'No se pudo reintentar', (err as Error).message));
-    }, [useBrowserCookies, setUseBrowserCookies, cookiesBrowser, removeFromQueue, enqueueDownload, toast]);
+    }, [removeFromQueue, enqueueDownload, toast]);
+
+    // Plain retry — re-runs with the same settings the original task used. If the
+    // failed task didn't use cookies, the retry won't enable them; if it did, it keeps
+    // them. Combined with backend .part cleanup, this guarantees a clean re-download
+    // (no resumed/corrupt fragments).
+    const handleRetry = useCallback((task: DownloadTask) => {
+        if (!task.source_url) {
+            toast.push('error', 'No se puede reintentar', 'Falta la URL de origen.');
+            return;
+        }
+        removeFromQueue(task.task_id);
+        enqueueDownload(
+            task.source_url,
+            task.title,
+            task.thumbnail,
+            task.platform || 'other',
+            task.output_format || (task.format_type === 'audio' ? 'mp3' : 'mp4'),
+            {
+                forceCookies: !!task.used_cookies,
+                formatTypeOverride: task.format_type,
+                qualityOverride: task.quality,
+                audioQualityOverride: task.audio_quality,
+            },
+        ).catch((err) => toast.push('error', 'No se pudo reintentar', (err as Error).message));
+    }, [removeFromQueue, enqueueDownload, toast]);
 
     const handleOpenSettings = useCallback(() => {
         setActiveTab('settings');
@@ -514,6 +541,7 @@ export function DownloaderView() {
                                         onRemove={() => removeFromQueue(task.task_id)}
                                         onOpen={() => task.filepath && window.electronAPI?.openPath(task.filepath)}
                                         onShowFolder={() => task.filepath && window.electronAPI?.showItemInFolder(task.filepath)}
+                                        onRetry={() => handleRetry(task)}
                                         onRetryWithCookies={() => handleRetryWithCookies(task)}
                                         onOpenSettings={handleOpenSettings}
                                     />
@@ -655,11 +683,12 @@ interface QueueCardProps {
     onRemove: () => void;
     onOpen: () => void;
     onShowFolder: () => void;
+    onRetry: () => void;
     onRetryWithCookies: () => void;
     onOpenSettings: () => void;
 }
 
-function QueueCard({ task, onCancel, onRemove, onOpen, onShowFolder, onRetryWithCookies, onOpenSettings }: QueueCardProps) {
+function QueueCard({ task, onCancel, onRemove, onOpen, onShowFolder, onRetry, onRetryWithCookies, onOpenSettings }: QueueCardProps) {
     const [showRawError, setShowRawError] = useState(false);
     const isActive = ['downloading', 'processing', 'fetching_info', 'queued'].includes(task.status);
     const isCompleted = task.status === 'completed';
@@ -740,11 +769,22 @@ function QueueCard({ task, onCancel, onRemove, onOpen, onShowFolder, onRetryWith
                             </div>
                         </div>
                         <div className="error-panel-actions">
-                            {parsed.canRetryWithCookies && task.source_url && (
-                                <button className="btn btn-primary" onClick={onRetryWithCookies}>
+                            {task.source_url && (
+                                <button className="btn btn-primary" onClick={onRetry}>
                                     <RotateCw size={12} strokeWidth={2} />
+                                    <span>Reintentar</span>
+                                </button>
+                            )}
+                            {parsed.canRetryWithCookies && task.source_url && !task.used_cookies && (
+                                <button className="btn btn-ghost" onClick={onRetryWithCookies}>
+                                    <KeyRound size={12} strokeWidth={2} />
                                     <span>Reintentar con cookies</span>
                                 </button>
+                            )}
+                            {parsed.canRetryWithCookies && task.used_cookies && (
+                                <span className="error-panel-note">
+                                    Las cookies activadas no resolvieron el error. Verifica que tu sesión del navegador tenga acceso a este contenido.
+                                </span>
                             )}
                             <button className="btn btn-ghost" onClick={onOpenSettings}>
                                 <KeyRound size={12} strokeWidth={2} />

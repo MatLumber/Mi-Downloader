@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8" />
+    <title>GravityDown Companion</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            margin: 0;
+            padding: 16px;
+            width: 280px;
+            background: #fcfaf6;
+            color: #2a2418;
+        }
+        @media (prefers-color-scheme: dark) {
+            body { background: #1a1610; color: #e8e4d8; }
+        }
+        h1 {
+            font-size: 13px;
+            margin: 0 0 4px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }
+        .sub {
+            font-size: 11px;
+            opacity: 0.6;
+            margin: 0 0 14px;
+        }
+        .status {
+            font-size: 11.5px;
+            line-height: 1.5;
+            padding: 8px 10px;
+            background: rgba(212, 168, 42, 0.08);
+            border: 1px solid rgba(212, 168, 42, 0.25);
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+        button {
+            width: 100%;
+            padding: 9px 12px;
+            background: #d4a82a;
+            border: none;
+            border-radius: 6px;
+            color: #1a1610;
+            font-weight: 600;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 120ms;
+        }
+        button:hover:not(:disabled) { background: #c69a25; }
+        button:disabled { opacity: 0.55; cursor: wait; }
+        .result {
+            margin-top: 10px;
+            font-size: 11px;
+            line-height: 1.4;
+            min-height: 14px;
+        }
+        .ok { color: #2a7d3a; }
+        .err { color: #b03030; }
+        @media (prefers-color-scheme: dark) {
+            .ok { color: #6dc97e; }
+            .err { color: #e87a7a; }
+        }
+        .footer {
+            margin-top: 12px;
+            font-size: 10px;
+            opacity: 0.5;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>GravityDown Companion</h1>
+    <p class="sub">Sincronización de cookies de YouTube</p>
+    <div class="status" id="status">Cargando…</div>
+    <button id="sync">Sincronizar ahora</button>
+    <div class="result" id="result"></div>
+    <div class="footer">Auto-sincroniza al navegar YouTube</div>
+    <script src="popup.js"></script>
+</body>
+</html>
