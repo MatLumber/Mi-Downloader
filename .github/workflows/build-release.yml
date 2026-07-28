@@ -202,7 +202,18 @@ jobs:
               size   = $size
             }
           }
-          $manifest | ConvertTo-Json -Depth 5 | Set-Content release-extra\components.json -Encoding utf8
+          # Write UTF-8 WITHOUT a BOM. Windows PowerShell 5.1's `-Encoding utf8`
+          # emits a BOM, and JSON.parse() rejects a leading U+FEFF outright —
+          # which silently disabled engine self-repair in v1.0.20.
+          $json = $manifest | ConvertTo-Json -Depth 5
+          [System.IO.File]::WriteAllText(
+            (Join-Path $PWD 'release-extra\components.json'),
+            $json,
+            (New-Object System.Text.UTF8Encoding $false))
+
+          # Fail the build rather than publish a manifest the app cannot read.
+          node -e "JSON.parse(require('fs').readFileSync('release-extra/components.json','utf8'))"
+          if ($LASTEXITCODE -ne 0) { Write-Error 'components.json is not parseable'; exit 1 }
           Get-Content release-extra\components.json
 
       - name: Create GitHub release
