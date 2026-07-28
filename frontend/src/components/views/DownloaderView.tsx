@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Search, Loader2, Download, Film, Music, Play, FolderOpen,
@@ -58,22 +58,44 @@ export function DownloaderView() {
     const isPlaylist = !!videoInfo?.is_playlist && (videoInfo?.entries?.length ?? 0) > 0;
     const entries = useMemo(() => videoInfo?.entries ?? [], [videoInfo?.entries]);
 
+    // Aborts the in-flight analysis when the user starts another one or leaves
+    // the view — otherwise a slow request could land after the user moved on and
+    // repopulate the panel with stale results.
+    const infoAbortRef = useRef<AbortController | null>(null);
+
+    useEffect(() => () => infoAbortRef.current?.abort(), []);
+
     const handleFetch = async () => {
         if (!url.trim() || urlValid === false || loadingInfo || !apiOnline) return;
+
+        infoAbortRef.current?.abort();
+        const controller = new AbortController();
+        infoAbortRef.current = controller;
+
         setLoadingInfo(true);
         setVideoInfo(null);
         setSelectedEntries(new Set());
         try {
-            const info = await fetchVideoInfo(url);
+            const info = await fetchVideoInfo(url, controller.signal);
+            if (controller.signal.aborted) return;
             setVideoInfo(info);
             // Auto-select all playlist items by default for convenience
             if (info.is_playlist && info.entries) {
                 setSelectedEntries(new Set(info.entries.map((e) => e.id)));
             }
         } catch (error) {
-            toast.push('error', 'No pudimos analizar el enlace', (error as Error).message);
+            // A supersede/unmount abort is not a failure worth a toast.
+            if (controller.signal.aborted) return;
+            // Route through parseError so transport failures ("signal timed out",
+            // "Failed to fetch") get the same actionable Spanish hints as yt-dlp
+            // errors instead of leaking raw DOMException text.
+            const parsed = parseError((error as Error).message);
+            toast.push('error', parsed.title, parsed.hint);
         } finally {
-            setLoadingInfo(false);
+            if (infoAbortRef.current === controller) {
+                infoAbortRef.current = null;
+                setLoadingInfo(false);
+            }
         }
     };
 

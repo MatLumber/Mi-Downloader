@@ -109,6 +109,22 @@ const PATTERNS: Array<{ test: RegExp; code: ErrorCode; title: string; hint: stri
         title: 'Sin conexión',
         hint: 'No se pudo contactar el servidor. Revisa tu conexión a internet.',
     },
+    // The renderer's own abort. `AbortSignal.timeout()` rejects with the
+    // untranslated DOMException message "signal timed out", which used to reach
+    // the user verbatim in the "No pudimos analizar el enlace" toast. Matched
+    // before the generic timeout rule so the hint names the right cause.
+    {
+        test: /signal timed out|the operation was aborted|se canceló|análisis del enlace tardó/i,
+        code: 'timeout',
+        title: 'El análisis tardó demasiado',
+        hint: 'La plataforma respondió muy lento o está limitando las peticiones. Reintenta en unos segundos; el resultado queda en caché si el motor termina de resolverlo.',
+    },
+    {
+        test: /no hay conexión con el motor|failed to fetch|networkerror when attempting to fetch/i,
+        code: 'network',
+        title: 'Sin conexión con el motor',
+        hint: 'El motor de GravityDown no está respondiendo. Espera unos segundos a que arranque, o reinícialo desde Ajustes.',
+    },
     {
         test: /read operation timed out|timed out|timeout|connection reset by peer|incomplete read/i,
         code: 'timeout',

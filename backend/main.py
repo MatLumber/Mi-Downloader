@@ -4,7 +4,10 @@ High-performance media extraction API.
 """
 
 import asyncio
+import contextlib
+import errno
 import os
+import socket
 import sys
 import json
 import uuid
@@ -13,30 +16,91 @@ import threading
 import subprocess
 import shutil
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from downloader import DownloadManager, DownloadStatus
+
+APP_VERSION = "2.0.0"
+
+# The packaged engine is a GUI-subsystem process (PyInstaller console=False).
+# When Windows gives it no valid standard handles, Python sets sys.stdout and
+# sys.stderr to None — and then every plain `print()` in this module raises
+# AttributeError on a worker thread, silently killing compressions and
+# conversions. Electron normally supplies pipes, but this guarantees it.
+for _stream_name in ("stdout", "stderr"):
+    if getattr(sys, _stream_name, None) is None:
+        setattr(sys, _stream_name, open(os.devnull, "w", encoding="utf-8"))
+
+# Preferred port. The companion browser extension and older builds of the
+# renderer both assume 8765, so it stays first in line; PORT_SCAN_RANGE is the
+# fallback used when something else already holds it (a stale engine from a
+# crashed session, another app, a second GravityDown install). Before this,
+# an occupied 8765 bricked the app permanently with no recoverable error.
+DEFAULT_PORT = 8765
+PORT_SCAN_RANGE = 24
+
+
+def _state_dir() -> str:
+    """Per-user directory shared by the engine, Electron and the extension."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+    folder = os.path.join(base, "GravityDown")
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def endpoint_file() -> str:
+    """Where the engine advertises the port it actually bound."""
+    return os.path.join(_state_dir(), "backend-endpoint.json")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Encoder probing shells out to ffmpeg, which costs ~300ms. Doing it on a
+    # worker thread keeps the port answering health checks immediately, which
+    # is what Electron gates the window on.
+    threading.Thread(target=_detect_encoders, daemon=True).start()
+    yield
+    _shutdown_running_processes()
+
 
 # Initialize FastAPI app
 app = FastAPI(
     title="GravityDown API",
     description="High-performance YouTube media extraction engine",
-    version="1.0.0",
+    version=APP_VERSION,
+    lifespan=lifespan,
 )
 
-# CORS for Electron frontend
+# CORS.
+#
+# This server listens on loopback, but loopback is NOT private: any web page
+# the user visits can issue cross-origin requests to 127.0.0.1. The previous
+# `allow_origins=["*"]` + `allow_credentials=True` combination let any site
+# enumerate local files through /local-info and /local-thumbnail and queue
+# downloads. The allowlist below covers the only three legitimate callers:
+# the packaged renderer (file:// → Origin "null"), the Vite dev server, and
+# the companion extension.
+ALLOWED_ORIGINS = [
+    "null",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^chrome-extension://[a-p]+$",
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -45,7 +109,6 @@ manager = DownloadManager()
 
 compression_tasks = {}
 compression_lock = threading.Lock()
-compression_executor = asyncio.get_event_loop().run_in_executor
 compression_encoders = {
     "available": False,
     "best": None,
@@ -221,6 +284,46 @@ class CompressionEncoderResponse(BaseModel):
     all: list
 
 
+# Windows: the packaged engine is built with console=False, so it owns no
+# console. A child process started with default flags would allocate its own —
+# meaning a black cmd window flashing on screen for every ffmpeg/ffprobe call.
+# CREATE_NO_WINDOW suppresses that. On other platforms this is a no-op.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+
+def _run(command: list, **kwargs):
+    """subprocess.run with the no-console-window flag applied."""
+    kwargs.setdefault("creationflags", _NO_WINDOW)
+    return subprocess.run(command, **kwargs)
+
+
+def _popen(command: list, **kwargs):
+    """subprocess.Popen with the no-console-window flag applied."""
+    kwargs.setdefault("creationflags", _NO_WINDOW)
+    return subprocess.Popen(command, **kwargs)
+
+
+def _shutdown_running_processes() -> None:
+    """Kill any in-flight ffmpeg on shutdown.
+
+    Without this, quitting the app mid-compression orphaned an ffmpeg process
+    that kept a CPU core pinned and held the output file open indefinitely.
+    """
+    for lock, tasks in ((compression_lock, compression_tasks), (convert_lock, convert_tasks)):
+        with lock:
+            snapshot = list(tasks.values())
+        for task in snapshot:
+            process = getattr(task, "process", None)
+            if not process or process.poll() is not None:
+                continue
+            with contextlib.suppress(Exception):
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+
+
 def _find_binary(binary_name: str, env_key: str) -> Optional[str]:
     env_path = os.environ.get(env_key)
     if env_path and os.path.isfile(env_path):
@@ -256,7 +359,7 @@ def _detect_encoders() -> None:
         return
 
     try:
-        result = subprocess.run([
+        result = _run([
             ffmpeg,
             "-encoders",
         ], capture_output=True, text=True, check=True)
@@ -286,7 +389,7 @@ def _get_duration_ms(input_path: str) -> Optional[int]:
         return None
 
     try:
-        result = subprocess.run(
+        result = _run(
             [
                 ffprobe,
                 "-v",
@@ -313,7 +416,7 @@ def _get_local_info(input_path: str) -> dict:
         return {"duration": None, "size": None, "bit_rate": None}
 
     try:
-        result = subprocess.run(
+        result = _run(
             [
                 ffprobe,
                 "-v",
@@ -474,7 +577,7 @@ def _run_compression(task_id: str, input_path: str, output_dir: str, output_form
             task.output_path = output_path
             task.status = CompressionStatus.COMPRESSING
 
-    process = subprocess.Popen(
+    process = _popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -706,7 +809,7 @@ def _run_convert(task_id: str, input_path: str, output_dir: str, output_format: 
             task.output_path = output_path
             task.status = "processing"
 
-    process = subprocess.Popen(
+    process = _popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -827,24 +930,100 @@ def _run_convert(task_id: str, input_path: str, output_dir: str, output_format: 
 
 @app.get("/")
 async def root():
-    """Health check endpoint."""
+    """Health check endpoint.
+
+    Electron gates window creation on this, and the port scanner uses `name`
+    to tell our engine apart from an unrelated process squatting on 8765.
+    """
     return {
         "name": "GravityDown API",
         "status": "online",
-        "version": "1.0.0"
+        "version": APP_VERSION,
+        "ffmpeg": bool(_find_binary("ffmpeg.exe", "FFMPEG_PATH") or _find_binary("ffmpeg", "FFMPEG_PATH")),
+        "pid": os.getpid(),
     }
 
 
+# ---- /info -----------------------------------------------------------------
+#
+# yt-dlp extraction is blocking and routinely takes 15-60s: cold DNS, nsig
+# JavaScript interpretation, and per-client retries when YouTube rejects the
+# first player client. Two bugs came out of that:
+#
+#   1. `/info` was declared `async def` and called yt-dlp inline, so extraction
+#      blocked the whole event loop — health checks, SSE progress streams and
+#      cancel requests all froze for the duration.
+#   2. The renderer aborted at 10s and surfaced the raw DOMException text
+#      ("signal timed out") as the error message.
+#
+# Extraction now runs on a dedicated executor with a hard server-side deadline,
+# and results are cached briefly so re-analysing the same link is instant.
+
+_INFO_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="info")
+_INFO_TIMEOUT_SEC = 75.0
+_INFO_CACHE_TTL_SEC = 120.0
+_info_cache: dict[str, tuple[float, dict]] = {}
+_info_cache_lock = threading.Lock()
+
+
+def _info_cache_get(url: str) -> Optional[dict]:
+    with _info_cache_lock:
+        entry = _info_cache.get(url)
+        if not entry:
+            return None
+        stored_at, payload = entry
+        if time.time() - stored_at > _INFO_CACHE_TTL_SEC:
+            _info_cache.pop(url, None)
+            return None
+        return payload
+
+
+def _info_cache_put(url: str, payload: dict) -> None:
+    with _info_cache_lock:
+        if len(_info_cache) > 64:
+            _info_cache.clear()
+        _info_cache[url] = (time.time(), payload)
+
+
 @app.get("/info", response_model=VideoInfoResponse)
-async def get_video_info(url: str = Query(..., description="YouTube video URL")):
-    """
-    Fetch video metadata and available formats.
-    """
+async def get_video_info(url: str = Query(..., description="Media URL")):
+    """Fetch video or playlist metadata and available formats."""
+    url = (url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL vacía")
+
+    cached = _info_cache_get(url)
+    if cached is not None:
+        return VideoInfoResponse(**cached)
+
+    loop = asyncio.get_running_loop()
+    future = loop.run_in_executor(_INFO_EXECUTOR, manager.get_video_info, url)
+
     try:
-        info = manager.get_video_info(url)
-        return VideoInfoResponse(**info)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        info = await asyncio.wait_for(asyncio.shield(future), timeout=_INFO_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        # The worker thread keeps running; if it eventually succeeds the result
+        # lands in the cache via the callback below, so an immediate retry by
+        # the user is usually instant.
+        future.add_done_callback(
+            lambda fut: (
+                _info_cache_put(url, fut.result())
+                if not fut.cancelled() and fut.exception() is None
+                else None
+            )
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                "El análisis tardó demasiado. La plataforma está respondiendo lento "
+                "o bloqueando la petición. Reintenta en unos segundos."
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    _info_cache_put(url, info)
+    return VideoInfoResponse(**info)
 
 
 @app.get("/thumbnail")
@@ -1171,11 +1350,6 @@ async def get_compression_encoders():
     return CompressionEncoderResponse(**compression_encoders)
 
 
-@app.on_event("startup")
-async def on_startup():
-    _detect_encoders()
-
-
 @app.get("/compress/status/{task_id}", response_model=CompressionStatusResponse)
 async def get_compression_status(task_id: str):
     with compression_lock:
@@ -1386,7 +1560,7 @@ async def get_local_thumbnail(path: str = Query(..., description="Local video or
         ]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, timeout=15)
+        result = _run(cmd, capture_output=True, timeout=15)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -1402,8 +1576,92 @@ async def get_local_thumbnail(path: str = Query(..., description="Local video or
 
 # ============ Run Server ============
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")
 
-_detect_encoders()
+def _port_is_free(port: int) -> bool:
+    """True if we can bind 127.0.0.1:<port> right now.
+
+    SO_REUSEADDR is deliberately NOT set: on Windows it would let us bind a
+    port another process is already listening on, which is precisely the
+    collision we are trying to detect.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError as exc:
+            if exc.errno in (errno.EADDRINUSE, errno.EACCES) or getattr(exc, "winerror", None) == 10013:
+                return False
+            return False
+    return True
+
+
+def pick_port() -> int:
+    """Preferred port first, then a short scan. Raises if the whole range is taken."""
+    for offset in range(PORT_SCAN_RANGE):
+        candidate = DEFAULT_PORT + offset
+        if _port_is_free(candidate):
+            return candidate
+    raise RuntimeError(
+        f"No hay puertos libres entre {DEFAULT_PORT} y {DEFAULT_PORT + PORT_SCAN_RANGE - 1}."
+    )
+
+
+def write_endpoint(port: int) -> None:
+    """Advertise the bound port so Electron and the extension can find us.
+
+    Written before uvicorn starts serving, so by the time the port answers a
+    health check the file is already correct.
+    """
+    payload = {
+        "port": port,
+        "url": f"http://127.0.0.1:{port}",
+        "pid": os.getpid(),
+        "version": APP_VERSION,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    path = endpoint_file()
+    tmp = f"{path}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        os.replace(tmp, path)
+    except OSError as exc:
+        print(f"[ENGINE] could not write endpoint file: {exc}", flush=True)
+
+
+def clear_endpoint() -> None:
+    with contextlib.suppress(OSError):
+        os.remove(endpoint_file())
+
+
+def main() -> int:
+    import uvicorn
+
+    # GRAVITYDOWN_PORT lets Electron pin a port it already probed; otherwise we
+    # choose one ourselves. Either way the choice is published to the endpoint
+    # file, which is the single source of truth for every other component.
+    forced = os.environ.get("GRAVITYDOWN_PORT")
+    if forced and forced.isdigit() and _port_is_free(int(forced)):
+        port = int(forced)
+    else:
+        try:
+            port = pick_port()
+        except RuntimeError as exc:
+            print(f"[ENGINE] {exc}", flush=True)
+            return 1
+
+    # The endpoint file is the authoritative channel: the frozen build runs as a
+    # GUI-subsystem process (console=False), where sys.stdout can be None and
+    # print() would raise. The stdout banner is only a fast path for Electron.
+    write_endpoint(port)
+    with contextlib.suppress(Exception):
+        print(f"GRAVITYDOWN_ENDPOINT http://127.0.0.1:{port}", flush=True)
+
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    finally:
+        clear_endpoint()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

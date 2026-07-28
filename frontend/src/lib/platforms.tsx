@@ -1,6 +1,6 @@
 import { Youtube, Instagram, Facebook, Twitter, Twitch, Music, Link as LinkIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { API_BASE } from '../api/client';
+import { getApiBase } from '../api/client';
 
 export type Platform = 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'twitter' | 'twitch' | 'other';
 
@@ -39,7 +39,7 @@ export function resolveThumbnail(thumbnail: string | null | undefined, platform?
     if (!thumbnail) return '';
     const name = (platform || '').toLowerCase();
     if (name === 'instagram' || name === 'facebook') {
-        return `${API_BASE}/thumbnail?url=${encodeURIComponent(thumbnail)}`;
+        return `${getApiBase()}/thumbnail?url=${encodeURIComponent(thumbnail)}`;
     }
     return thumbnail;
 }

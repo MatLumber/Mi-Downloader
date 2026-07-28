@@ -64,6 +64,32 @@ _COOKIE_EXTRACT_ERROR_PATTERN = re.compile(
 )
 
 
+_PERMANENT_INFO_ERROR_PATTERN = re.compile(
+    r"unsupported url"
+    r"|is not a valid url"
+    r"|video unavailable"
+    r"|private video"
+    r"|has been removed"
+    r"|removed by the uploader"
+    r"|account associated with this video has been terminated"
+    r"|this video is not available"
+    r"|sign in to confirm your age"
+    r"|members[- ]only"
+    r"|not available in your country",
+    re.IGNORECASE,
+)
+
+
+def _is_permanent_info_error(exc: BaseException) -> bool:
+    """True when retrying with a different player client cannot possibly help.
+
+    Age gates, deletions and unsupported URLs fail identically for every client;
+    retrying them three times just burns the caller's deadline and turns a clear
+    error message into a timeout.
+    """
+    return bool(_PERMANENT_INFO_ERROR_PATTERN.search(str(exc)))
+
+
 def _is_cookie_extract_error(exc: BaseException) -> bool:
     """True if the exception is yt-dlp failing to read the chosen browser's cookies.
 
@@ -305,124 +331,161 @@ class DownloadManager:
         if task_id in self._callbacks:
             self._callbacks[task_id](task)
     
+    # Player-client sets tried in order when extraction fails. YouTube rejects
+    # different clients at different times (PO-token requirements, A/B rollouts),
+    # so a single fixed list produces intermittent "no formats"/timeout failures
+    # that a retry with a different client resolves immediately.
+    _INFO_CLIENT_SETS = (
+        ["web", "web_safari", "android_vr"],
+        ["android_vr", "tv"],
+        ["web_embedded", "mweb"],
+    )
+
     def get_video_info(self, url: str) -> Dict[str, Any]:
-        """Fetch video or playlist metadata without downloading."""
+        """Fetch video or playlist metadata without downloading.
+
+        Retries across player-client sets before giving up. Only the extraction
+        is retried — parsing is deterministic, so it runs once on the winner.
+        """
         url = self._normalize_url(url)
+        if not url:
+            raise ValueError("URL vacía")
+
         is_playlist_url = ("list=" in url) or ("/playlist" in url)
         platform = self._detect_platform(url)
 
-        # For playlists we use extract_flat='in_playlist' to get all entries fast
-        # without resolving each video's full format ladder.
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": "in_playlist" if is_playlist_url else False,
-            "skip_download": True,
-            "socket_timeout": 20,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["web", "web_safari", "android_vr"],
-                }
-            },
-        }
+        info = None
+        last_error: Optional[BaseException] = None
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        for attempt, clients in enumerate(self._INFO_CLIENT_SETS):
+            # For playlists we use extract_flat='in_playlist' to get all entries
+            # fast without resolving each video's full format ladder.
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "extract_flat": "in_playlist" if is_playlist_url else False,
+                "skip_download": True,
+                "socket_timeout": 15,
+                # Bounded internally: the HTTP endpoint enforces its own deadline,
+                # so yt-dlp must not sit in a long exponential backoff.
+                "retries": 2,
+                "extractor_retries": 1,
+                "noplaylist": not is_playlist_url,
+            }
+            if platform == "youtube":
+                ydl_opts["extractor_args"] = {"youtube": {"player_client": clients}}
 
-            if not info:
-                raise ValueError("Could not extract video info")
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                if info:
+                    break
+                last_error = ValueError("La plataforma no devolvió datos del enlace")
+            except Exception as exc:  # noqa: BLE001 — retried below, re-raised at the end
+                last_error = exc
+                # A URL the extractor flat-out rejects will fail identically for
+                # every client; retrying just burns the caller's deadline.
+                if _is_permanent_info_error(exc) or platform != "youtube":
+                    break
+            if attempt < len(self._INFO_CLIENT_SETS) - 1:
+                continue
 
-            is_playlist = info.get("_type") == "playlist" or bool(info.get("entries"))
+        if not info:
+            if last_error is not None:
+                raise last_error
+            raise ValueError("No se pudo extraer la información del enlace")
 
-            if is_playlist:
-                raw_entries = info.get("entries") or []
-                entries = []
-                for entry in raw_entries:
-                    if not entry:
-                        continue
-                    eid = entry.get("id") or ""
-                    entry_url = (
-                        entry.get("webpage_url")
-                        or entry.get("url")
-                        or (f"https://www.youtube.com/watch?v={eid}" if eid and platform == "youtube" else "")
-                    )
-                    if not entry_url:
-                        continue
-                    duration = entry.get("duration")
-                    if isinstance(duration, float):
-                        duration = int(duration)
-                    thumbnail = entry.get("thumbnail")
-                    if not thumbnail and platform == "youtube" and eid:
-                        thumbnail = f"https://i.ytimg.com/vi/{eid}/hqdefault.jpg"
-                    entries.append({
-                        "id": eid,
-                        "title": entry.get("title") or "Sin título",
-                        "url": entry_url,
-                        "thumbnail": thumbnail,
-                        "duration": duration,
-                    })
+        is_playlist = info.get("_type") == "playlist" or bool(info.get("entries"))
 
-                playlist_thumb = info.get("thumbnail")
-                if not playlist_thumb and entries:
-                    playlist_thumb = entries[0].get("thumbnail")
+        if is_playlist:
+            raw_entries = info.get("entries") or []
+            entries = []
+            for entry in raw_entries:
+                if not entry:
+                    continue
+                eid = entry.get("id") or ""
+                entry_url = (
+                    entry.get("webpage_url")
+                    or entry.get("url")
+                    or (f"https://www.youtube.com/watch?v={eid}" if eid and platform == "youtube" else "")
+                )
+                if not entry_url:
+                    continue
+                duration = entry.get("duration")
+                if isinstance(duration, float):
+                    duration = int(duration)
+                thumbnail = entry.get("thumbnail")
+                if not thumbnail and platform == "youtube" and eid:
+                    thumbnail = f"https://i.ytimg.com/vi/{eid}/hqdefault.jpg"
+                entries.append({
+                    "id": eid,
+                    "title": entry.get("title") or "Sin título",
+                    "url": entry_url,
+                    "thumbnail": thumbnail,
+                    "duration": duration,
+                })
 
-                return {
-                    "id": info.get("id") or "",
-                    "title": info.get("title") or "Playlist",
-                    "thumbnail": playlist_thumb,
-                    "duration": None,
-                    "channel": info.get("channel") or info.get("uploader"),
-                    "view_count": None,
-                    "platform": platform,
-                    "formats": [],
-                    "is_playlist": True,
-                    "playlist_count": len(entries),
-                    "entries": entries,
-                }
-
-            # Single video — extract format ladder
-            formats = []
-            seen_resolutions = set()
-
-            for f in info.get("formats", []):
-                height = f.get("height")
-                vcodec = f.get("vcodec", "none")
-                acodec = f.get("acodec", "none")
-
-                if height and vcodec != "none":
-                    resolution = f"{height}p"
-                    if resolution not in seen_resolutions:
-                        seen_resolutions.add(resolution)
-                        formats.append({
-                            "format_id": f.get("format_id"),
-                            "resolution": resolution,
-                            "height": height,
-                            "ext": f.get("ext"),
-                            "type": "video",
-                            "has_audio": acodec != "none",
-                            "filesize": f.get("filesize") or f.get("filesize_approx"),
-                        })
-
-            formats.sort(key=lambda x: x.get("height", 0), reverse=True)
-
-            duration = info.get("duration")
-            if isinstance(duration, float):
-                duration = int(duration)
+            playlist_thumb = info.get("thumbnail")
+            if not playlist_thumb and entries:
+                playlist_thumb = entries[0].get("thumbnail")
 
             return {
-                "id": info.get("id"),
-                "title": info.get("title"),
-                "thumbnail": info.get("thumbnail"),
-                "duration": duration,
+                "id": info.get("id") or "",
+                "title": info.get("title") or "Playlist",
+                "thumbnail": playlist_thumb,
+                "duration": None,
                 "channel": info.get("channel") or info.get("uploader"),
-                "view_count": info.get("view_count"),
+                "view_count": None,
                 "platform": platform,
-                "formats": formats,
-                "is_playlist": False,
-                "playlist_count": 0,
-                "entries": [],
+                "formats": [],
+                "is_playlist": True,
+                "playlist_count": len(entries),
+                "entries": entries,
             }
-            
+
+        # Single video — extract format ladder
+        formats = []
+        seen_resolutions = set()
+
+        for f in info.get("formats", []):
+            height = f.get("height")
+            vcodec = f.get("vcodec", "none")
+            acodec = f.get("acodec", "none")
+
+            if height and vcodec != "none":
+                resolution = f"{height}p"
+                if resolution not in seen_resolutions:
+                    seen_resolutions.add(resolution)
+                    formats.append({
+                        "format_id": f.get("format_id"),
+                        "resolution": resolution,
+                        "height": height,
+                        "ext": f.get("ext"),
+                        "type": "video",
+                        "has_audio": acodec != "none",
+                        "filesize": f.get("filesize") or f.get("filesize_approx"),
+                    })
+
+        formats.sort(key=lambda x: x.get("height", 0), reverse=True)
+
+        duration = info.get("duration")
+        if isinstance(duration, float):
+            duration = int(duration)
+
+        return {
+            "id": info.get("id"),
+            "title": info.get("title"),
+            "thumbnail": info.get("thumbnail"),
+            "duration": duration,
+            "channel": info.get("channel") or info.get("uploader"),
+            "view_count": info.get("view_count"),
+            "platform": platform,
+            "formats": formats,
+            "is_playlist": False,
+            "playlist_count": 0,
+            "entries": [],
+        }
+        
     def _detect_platform(self, url: str) -> str:
         """Detect platform from URL."""
         if "youtube.com" in url or "youtu.be" in url:
