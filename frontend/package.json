@@ -56,7 +56,12 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "createStartMenuShortcut": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "installerIcon": "public/icon.ico",
+      "uninstallerIcon": "public/icon.ico",
+      "installerHeaderIcon": "public/icon.ico",
+      "deleteAppDataOnUninstall": false
     },
     "files": [
       "dist/**/*",

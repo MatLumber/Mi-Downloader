@@ -1,5 +1,9 @@
 name: Auto Tag
 
+# Every push to master/main bumps the patch version, tags it, and ships a
+# release. The guards below stop the bot's own release commit from re-triggering
+# the loop.
+
 on:
   push:
     branches:
@@ -29,23 +33,13 @@ jobs:
       - name: Bump version
         id: bump
         run: |
-          node - <<'NODE'
-          const fs = require('fs');
-          const path = 'frontend/package.json';
-          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
-          const [maj, min, pat] = pkg.version.split('.').map(Number);
-          const next = `${maj}.${min}.${pat + 1}`;
-          pkg.version = next;
-          fs.writeFileSync(path, JSON.stringify(pkg, null, 2));
-          fs.writeFileSync('version.txt', next);
-          NODE
-          echo "version=$(cat version.txt)" >> $GITHUB_OUTPUT
+          node .github/scripts/bump-version.js >> $GITHUB_OUTPUT
 
       - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add frontend/package.json
+          git add frontend/package.json frontend/package-lock.json
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
@@ -54,127 +48,13 @@ jobs:
           git tag v${{ steps.bump.outputs.version }}
           git push origin HEAD:${{ github.ref_name }} --tags
 
+  # The Windows build lives in build-release.yml so this workflow and release.yml
+  # cannot drift apart — a divergence there ships a broken update to everyone.
   build-release:
     needs: tag
     if: ${{ needs.tag.outputs.version != '' }}
-    runs-on: windows-latest
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: false
-      ELECTRON_BUILDER_SKIP_WIN_CODESIGN: true
-      NODE_OPTIONS: --max-old-space-size=8192
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.ref_name }}
-
-      - name: Checkout tag
-        run: |
-          git fetch --tags --force
-          git checkout v${{ needs.tag.outputs.version }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install backend deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt pyinstaller
-
-      - name: Download ffmpeg
-        shell: powershell
-        run: |
-          $zip = "$env:RUNNER_TEMP\ffmpeg.zip"
-          $dest = "$env:RUNNER_TEMP\ffmpeg"
-          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath $dest -Force
-          $ffmpeg = Get-ChildItem -Path $dest -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          $ffprobe = Get-ChildItem -Path $dest -Recurse -Filter ffprobe.exe | Select-Object -First 1
-          New-Item -ItemType Directory -Path backend\ffmpeg -Force | Out-Null
-          Copy-Item $ffmpeg.FullName backend\ffmpeg\ffmpeg.exe -Force
-          Copy-Item $ffprobe.FullName backend\ffmpeg\ffprobe.exe -Force
-
-      - name: Build backend
-        working-directory: backend
-        run: |
-          pyinstaller --clean --noconfirm gravitydown.spec
-
-      - name: Install frontend deps
-        working-directory: frontend
-        run: npm install
-
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
-
-      - name: Build release artifacts
-        working-directory: frontend
-        run: npx electron-builder --win --x64 --publish=never
-
-      - name: Validate latest.yml assets
-        working-directory: frontend
-        shell: bash
-        run: |
-          node - <<'NODE'
-          const fs = require('fs');
-          const path = require('path');
-
-          const releaseDir = path.resolve('release');
-          const latestPath = path.join(releaseDir, 'latest.yml');
-
-          if (!fs.existsSync(latestPath)) {
-            console.error(`latest.yml not found at ${latestPath}`);
-            process.exit(1);
-          }
-
-          const content = fs.readFileSync(latestPath, 'utf8');
-          const urls = [];
-          const pathMatch = content.match(/^path:\s*(.+)\s*$/m);
-          if (pathMatch) {
-            urls.push(pathMatch[1].trim());
-          }
-
-          const urlRegex = /^\s*-\s*url:\s*(.+)\s*$/gm;
-          let match;
-          while ((match = urlRegex.exec(content)) !== null) {
-            urls.push(match[1].trim());
-          }
-
-          const unique = Array.from(new Set(urls)).filter(Boolean);
-          if (unique.length === 0) {
-            console.error('No assets referenced in latest.yml');
-            process.exit(1);
-          }
-
-          const missing = unique.filter((file) => !fs.existsSync(path.join(releaseDir, file)));
-          if (missing.length) {
-            console.error(`Missing assets referenced by latest.yml: ${missing.join(', ')}`);
-            process.exit(1);
-          }
-
-          console.log(`latest.yml assets exist: ${unique.join(', ')}`);
-          NODE
-
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.tag.outputs.version }}
-          name: v${{ needs.tag.outputs.version }}
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-          make_latest: true
-          files: |
-            frontend/release/*.exe
-            frontend/release/*.yml
-            frontend/release/*.blockmap
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    uses: ./.github/workflows/build-release.yml
+    with:
+      ref: v${{ needs.tag.outputs.version }}
+    permissions:
+      contents: write

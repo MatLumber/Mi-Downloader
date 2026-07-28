@@ -1,0 +1,74 @@
+name: yt-dlp Refresh
+
+# Ships a new build whenever yt-dlp publishes a release.
+#
+# The engine bundles yt-dlp inside the frozen exe, so a user's install is pinned
+# to whatever version was current on their build day. YouTube changes its player
+# and signature scheme constantly, and a yt-dlp more than a few weeks old starts
+# returning "no formats" or hanging — the app breaks on its own with the user
+# changing nothing. This keeps every install current through the normal
+# auto-update path.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC. yt-dlp cuts releases roughly weekly.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_release: ${{ steps.compare.outputs.needs_release }}
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare bundled yt-dlp against upstream
+        id: compare
+        run: |
+          latest=$(curl -fsSL https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest | jq -r .tag_name)
+          echo "Upstream yt-dlp: $latest"
+
+          # We record the version shipped by the last refresh so we only cut a
+          # release when it actually changed. Without this the workflow would
+          # push a pointless build every Monday.
+          current=$(cat .github/ytdlp-version.txt 2>/dev/null || echo "none")
+          echo "Last shipped:    $current"
+
+          if [ "$latest" = "$current" ]; then
+            echo "needs_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "needs_release=true" >> $GITHUB_OUTPUT
+            echo "$latest" > .github/ytdlp-version.txt
+          fi
+          echo "latest=$latest" >> $GITHUB_OUTPUT
+
+      - name: Bump version and tag
+        id: bump
+        if: ${{ steps.compare.outputs.needs_release == 'true' }}
+        run: |
+          node .github/scripts/bump-version.js >> $GITHUB_OUTPUT
+          version=$(grep '^version=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add frontend/package.json frontend/package-lock.json .github/ytdlp-version.txt
+          git commit -m "chore(release): v$version — yt-dlp ${{ steps.compare.outputs.latest }} [skip ci]"
+          git tag "v$version"
+          git push origin HEAD:${{ github.ref_name }} --tags
+
+  build-release:
+    needs: check
+    if: ${{ needs.check.outputs.needs_release == 'true' && needs.check.outputs.version != '' }}
+    uses: ./.github/workflows/build-release.yml
+    with:
+      ref: v${{ needs.check.outputs.version }}
+    permissions:
+      contents: write

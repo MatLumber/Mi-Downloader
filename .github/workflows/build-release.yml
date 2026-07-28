@@ -1,0 +1,224 @@
+name: Build & Release (reusable)
+
+# Single source of truth for the Windows build.
+#
+# auto-tag.yml and release.yml both call this. They used to carry byte-identical
+# copies of every step, which drifted whenever only one was updated — and a
+# broken release reaches every existing install through electron-updater.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref (tag) to build and publish'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+      ELECTRON_BUILDER_SKIP_WIN_CODESIGN: true
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pyinstaller
+          # yt-dlp goes stale fast — YouTube breaks unpinned extractors within
+          # weeks. Every release ships the newest one available at build time.
+          pip install --upgrade yt-dlp
+          python -c "import yt_dlp; print('yt-dlp', yt_dlp.version.__version__)"
+
+      - name: Download ffmpeg
+        shell: powershell
+        run: |
+          $zip = "$env:RUNNER_TEMP\ffmpeg.zip"
+          $dest = "$env:RUNNER_TEMP\ffmpeg"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $ffmpeg = Get-ChildItem -Path $dest -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem -Path $dest -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Path backend\ffmpeg -Force | Out-Null
+          Copy-Item $ffmpeg.FullName backend\ffmpeg\ffmpeg.exe -Force
+          Copy-Item $ffprobe.FullName backend\ffmpeg\ffprobe.exe -Force
+
+      - name: Verify bundled assets
+        shell: powershell
+        run: |
+          # The app must be fully self-contained: ffmpeg, ffprobe and the icon
+          # all have to be present before packaging, or users get an installer
+          # whose Compress/Convert tabs fail and which shows the stock Electron
+          # icon.
+          foreach ($f in @('backend\ffmpeg\ffmpeg.exe','backend\ffmpeg\ffprobe.exe','frontend\public\icon.ico')) {
+            if (-not (Test-Path $f)) { Write-Error "Missing required asset: $f"; exit 1 }
+            "OK $f ($((Get-Item $f).Length) bytes)"
+          }
+
+      - name: Build engine
+        working-directory: backend
+        run: pyinstaller --clean --noconfirm gravitydown.spec
+
+      - name: Smoke-test packaged engine
+        shell: powershell
+        run: |
+          # PyInstaller happily produces an exe that dies on launch when a
+          # dynamically-imported module (every yt-dlp extractor) was missed.
+          # Publishing that would push a dead engine to every existing install,
+          # so the release is gated on the frozen binary actually serving.
+          $exe = "backend\dist\gravitydown-engine.exe"
+          if (-not (Test-Path $exe)) { Write-Error "Engine binary not produced"; exit 1 }
+
+          $proc = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+          $ok = $false
+          $port = 8765
+          foreach ($i in 1..40) {
+            Start-Sleep -Seconds 1
+            try {
+              $body = Invoke-RestMethod -Uri "http://127.0.0.1:$port/" -TimeoutSec 3
+              if ($body.name -eq 'GravityDown API') { $ok = $true; break }
+            } catch { }
+          }
+
+          if ($ok) {
+            "Engine online: version $($body.version), ffmpeg detected: $($body.ffmpeg)"
+            if (-not $body.ffmpeg) { Write-Error "Engine cannot find ffmpeg"; }
+            # Exercise a real extraction so a broken extractor bundle fails the
+            # build instead of shipping.
+            try {
+              $info = Invoke-RestMethod -TimeoutSec 90 -Uri (
+                "http://127.0.0.1:$port/info?url=" +
+                [uri]::EscapeDataString("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+              "Extraction OK: '$($info.title)' with $($info.formats.Count) formats"
+              if ($info.formats.Count -eq 0) { Write-Error "No formats returned"; $ok = $false }
+            } catch {
+              # YouTube can rate-limit CI runners; that is not a code defect, so
+              # this is a warning rather than a hard failure.
+              "::warning::Extraction check failed (possible CI rate limit): $_"
+            }
+          }
+
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) { Write-Error "Packaged engine failed its smoke test"; exit 1 }
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint & type-check
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm run build
+
+      - name: Build release artifacts
+        working-directory: frontend
+        run: npx electron-builder --win --x64 --publish=never
+
+      - name: Validate latest.yml assets
+        working-directory: frontend
+        shell: bash
+        run: |
+          # electron-updater reads latest.yml and fetches the files it names. If
+          # any is missing from the release, every existing install fails its
+          # update check — so this must pass before we publish.
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const releaseDir = path.resolve('release');
+          const latestPath = path.join(releaseDir, 'latest.yml');
+
+          if (!fs.existsSync(latestPath)) {
+            console.error(`latest.yml not found at ${latestPath}`);
+            process.exit(1);
+          }
+
+          const content = fs.readFileSync(latestPath, 'utf8');
+          const urls = [];
+          const pathMatch = content.match(/^path:\s*(.+)\s*$/m);
+          if (pathMatch) urls.push(pathMatch[1].trim());
+
+          const urlRegex = /^\s*-\s*url:\s*(.+)\s*$/gm;
+          let match;
+          while ((match = urlRegex.exec(content)) !== null) urls.push(match[1].trim());
+
+          const unique = Array.from(new Set(urls)).filter(Boolean);
+          if (unique.length === 0) {
+            console.error('No assets referenced in latest.yml');
+            process.exit(1);
+          }
+
+          const missing = unique.filter((file) => !fs.existsSync(path.join(releaseDir, file)));
+          if (missing.length) {
+            console.error(`Missing assets referenced by latest.yml: ${missing.join(', ')}`);
+            process.exit(1);
+          }
+
+          console.log(`latest.yml assets exist: ${unique.join(', ')}`);
+          NODE
+
+      - name: Publish repairable components
+        shell: powershell
+        run: |
+          # The app can re-download a missing component at startup (antivirus
+          # quarantine of the unsigned engine is the common case). For that to
+          # be safe the engine must be downloadable on its own AND verifiable,
+          # so we publish the binary next to the installers together with its
+          # SHA-256. The app refuses to run an engine it cannot verify.
+          New-Item -ItemType Directory -Path release-extra -Force | Out-Null
+          Copy-Item backend\dist\gravitydown-engine.exe release-extra\gravitydown-engine.exe -Force
+
+          $tag = "${{ inputs.ref }}"
+          $version = $tag.TrimStart('v')
+          $hash = (Get-FileHash release-extra\gravitydown-engine.exe -Algorithm SHA256).Hash.ToLower()
+          $size = (Get-Item release-extra\gravitydown-engine.exe).Length
+
+          $manifest = [ordered]@{
+            version = $version
+            engine  = [ordered]@{
+              url    = "https://github.com/${{ github.repository }}/releases/download/$tag/gravitydown-engine.exe"
+              sha256 = $hash
+              size   = $size
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content release-extra\components.json -Encoding utf8
+          Get-Content release-extra\components.json
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.ref }}
+          name: ${{ inputs.ref }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: |
+            frontend/release/*.exe
+            frontend/release/*.yml
+            frontend/release/*.blockmap
+            release-extra/gravitydown-engine.exe
+            release-extra/components.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
