@@ -9,7 +9,7 @@ import { HistoryView } from './components/views/HistoryView';
 import { SettingsView } from './components/views/SettingsView';
 import { ToastProvider } from './components/shared/Toast';
 import { useAppStore } from './store/useAppStore';
-import { checkApiHealth } from './api/client';
+import { checkApiHealth, setApiBase } from './api/client';
 
 function App() {
     const setApiOnline = useAppStore((s) => s.setApiOnline);
@@ -25,6 +25,27 @@ function App() {
         root.style.colorScheme = theme;
     }, [theme]);
 
+    // The engine binds the first free port from 8765 up, so the renderer learns
+    // the real base URL from Electron before polling. Without this handshake a
+    // machine where 8765 was already taken showed a permanently offline app.
+    useEffect(() => {
+        let cancelled = false;
+
+        const applyStatus = (status?: { baseUrl?: string; ready?: boolean } | null) => {
+            if (cancelled || !status) return;
+            setApiBase(status.baseUrl);
+            if (status.ready) setApiOnline(true);
+        };
+
+        window.electronAPI?.getBackendStatus?.().then(applyStatus).catch(() => { });
+        const unsub = window.electronAPI?.onBackendStatus?.(applyStatus);
+
+        return () => {
+            cancelled = true;
+            if (typeof unsub === 'function') unsub();
+        };
+    }, [setApiOnline]);
+
     useEffect(() => {
         const tick = async () => setApiOnline(await checkApiHealth());
         tick();
@@ -38,6 +59,28 @@ function App() {
             if (mounted && v) setAppVersion(v);
         }).catch(() => { });
         return () => { mounted = false; };
+    }, []);
+
+    // Self-repair runs before the engine starts. Surfacing it in the same
+    // banner as updates keeps a first launch that has to re-download a
+    // quarantined component from looking like the app is simply hung.
+    useEffect(() => {
+        const unsub = window.electronAPI?.onRepairStatus?.((payload) => {
+            if (!payload) return;
+            switch (payload.phase) {
+                case 'start':
+                    setUpdateStatus(payload.message || 'Restaurando componentes…'); break;
+                case 'download':
+                    setUpdateStatus(`Descargando componentes · ${Math.round(payload.percent || 0)}%`); break;
+                case 'done':
+                    setUpdateStatus('Componentes restaurados. Iniciando motor…');
+                    window.setTimeout(() => setUpdateStatus(''), 4000);
+                    break;
+                case 'failed':
+                    setUpdateStatus(payload.message || 'No se pudieron restaurar los componentes'); break;
+            }
+        });
+        return () => { if (typeof unsub === 'function') unsub(); };
     }, []);
 
     useEffect(() => {

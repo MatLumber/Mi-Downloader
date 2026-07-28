@@ -32,6 +32,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     statFile: (path) => ipcRenderer.invoke('stat-file', path),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
+    // Backend endpoint. The engine picks the first free port from 8765 up, so
+    // the renderer must ask rather than assume.
+    getBackendStatus: () => ipcRenderer.invoke('get-backend-status'),
+    restartBackend: () => ipcRenderer.invoke('restart-backend'),
+    openBackendLog: () => ipcRenderer.invoke('open-backend-log'),
+    onBackendStatus: (callback) => {
+      const listener = (_, payload) => callback(payload);
+      ipcRenderer.on('backend-status', listener);
+      return () => ipcRenderer.removeListener('backend-status', listener);
+    },
+
+    // Self-repair progress: emitted while a missing component (quarantined
+    // engine, absent ffmpeg) is being re-downloaded at startup.
+    onRepairStatus: (callback) => {
+      const listener = (_, payload) => callback(payload);
+      ipcRenderer.on('repair-status', listener);
+      return () => ipcRenderer.removeListener('repair-status', listener);
+    },
     onUpdateStatus: (callback) => {
       const listener = (_, payload) => callback(payload);
       ipcRenderer.on('update-status', listener);

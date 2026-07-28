@@ -1,9 +1,13 @@
 import { Sun, Moon, KeyRound, FileText, X, Puzzle, FolderOpen, RefreshCw, Check } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import type { CookiesBrowser } from '../../store/useAppStore';
 import { PathPicker } from '../shared/PathPicker';
-import { getCookiesSyncStatus, clearSyncedCookies, type CookiesSyncStatus } from '../../api/client';
+import {
+    getCookiesSyncStatus, clearSyncedCookies, fetchApiHealth,
+    type CookiesSyncStatus, type ApiHealth,
+} from '../../api/client';
+import { useToast } from '../../hooks/useToast';
 
 const BROWSERS: { value: CookiesBrowser; label: string }[] = [
     { value: 'chrome', label: 'Chrome' },
@@ -450,6 +454,103 @@ export function SettingsView() {
                     <div className="settings-row-control">
                         <span className="kbd">Enter</span>
                     </div>
+                </div>
+            </div>
+
+            <EngineSection />
+        </div>
+    );
+}
+
+/**
+ * Engine diagnostics. Recovering from a wedged or crashed backend previously
+ * required quitting the whole app; the restart goes through Electron so it can
+ * kill the process tree (engine + any ffmpeg children) before respawning.
+ */
+function EngineSection() {
+    const [status, setStatus] = useState<{ ready: boolean; port: number; restarts: number } | null>(null);
+    const [health, setHealth] = useState<ApiHealth | null>(null);
+    const [restarting, setRestarting] = useState(false);
+    const toast = useToast();
+
+    const refresh = useCallback(async () => {
+        const [backend, api] = await Promise.all([
+            window.electronAPI?.getBackendStatus?.() ?? Promise.resolve(null),
+            fetchApiHealth(),
+        ]);
+        if (backend) setStatus(backend);
+        setHealth(api);
+    }, []);
+
+    useEffect(() => {
+        refresh();
+        const unsub = window.electronAPI?.onBackendStatus?.(() => { refresh(); });
+        return () => { if (typeof unsub === 'function') unsub(); };
+    }, [refresh]);
+
+    const handleRestart = async () => {
+        if (!window.electronAPI?.restartBackend) return;
+        setRestarting(true);
+        try {
+            const result = await window.electronAPI.restartBackend();
+            await refresh();
+            toast.push(
+                result.ready ? 'success' : 'error',
+                result.ready ? 'Motor reiniciado' : 'El motor no arrancó',
+                result.ready ? `Escuchando en el puerto ${result.port}.` : 'Revisa el log del motor.'
+            );
+        } finally {
+            setRestarting(false);
+        }
+    };
+
+    return (
+        <div className="surface surface-pad">
+            <div className="section-title" style={{ marginBottom: 6 }}>Motor</div>
+
+            <div className="settings-row">
+                <div className="settings-row-text">
+                    <div className="settings-name">Estado</div>
+                    <div className="settings-desc">
+                        {health?.online
+                            ? `Activo en el puerto ${status?.port ?? 8765}${health.version ? ` · v${health.version}` : ''}`
+                            : 'Sin conexión con el motor.'}
+                        {status && status.restarts > 0 && ` · ${status.restarts} reinicio(s) automático(s)`}
+                    </div>
+                </div>
+                <div className="settings-row-control">
+                    <span className={`status-dot ${health?.online ? 'is-online' : 'is-offline'}`} />
+                </div>
+            </div>
+
+            <div className="settings-row">
+                <div className="settings-row-text">
+                    <div className="settings-name">ffmpeg</div>
+                    <div className="settings-desc">
+                        {health?.online
+                            ? (health.ffmpeg
+                                ? 'Incluido y detectado. No necesitas instalar nada.'
+                                : 'No se encontró ffmpeg: comprimir y convertir no funcionarán.')
+                            : 'Se comprobará cuando el motor esté activo.'}
+                    </div>
+                </div>
+                <div className="settings-row-control">
+                    <span className={`status-dot ${health?.online && health.ffmpeg ? 'is-online' : 'is-offline'}`} />
+                </div>
+            </div>
+
+            <div className="settings-row">
+                <div className="settings-row-text">
+                    <div className="settings-name">Reiniciar motor</div>
+                    <div className="settings-desc">Detiene el proceso y lo vuelve a levantar. Cancela las tareas en curso.</div>
+                </div>
+                <div className="settings-row-control" style={{ display: 'inline-flex', gap: 8 }}>
+                    <button className="btn" onClick={() => window.electronAPI?.openBackendLog?.()}>
+                        Ver log
+                    </button>
+                    <button className="btn btn-primary" onClick={handleRestart} disabled={restarting}>
+                        {restarting ? 'Reiniciando…' : 'Reiniciar'}
+                    </button>
                 </div>
             </div>
         </div>

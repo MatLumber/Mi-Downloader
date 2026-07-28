@@ -10,7 +10,43 @@
 //   - Every 30 minutes via alarm → sync.
 //   - From the popup "Sincronizar ahora" button → sync immediately.
 
-const BACKEND_URL = 'http://127.0.0.1:8765/cookies/sync';
+// The engine binds the first free port from 8765 upward, so a fixed URL breaks
+// whenever 8765 is already taken. We remember the last port that worked and
+// only fall back to scanning the range when it stops answering.
+const BASE_PORT = 8765;
+const PORT_SCAN_RANGE = 24;
+const PORT_CACHE_KEY = 'backendPort';
+
+const syncUrl = (port) => `http://127.0.0.1:${port}/cookies/sync`;
+
+async function isEngine(port) {
+    try {
+        const response = await fetch(`http://127.0.0.1:${port}/`, {
+            signal: AbortSignal.timeout(800),
+        });
+        if (!response.ok) return false;
+        const body = await response.json();
+        return body && body.name === 'GravityDown API';
+    } catch {
+        return false;
+    }
+}
+
+async function resolveBackendPort() {
+    const cached = (await chrome.storage.local.get(PORT_CACHE_KEY))[PORT_CACHE_KEY];
+    if (Number.isInteger(cached) && (await isEngine(cached))) return cached;
+
+    for (let offset = 0; offset < PORT_SCAN_RANGE; offset += 1) {
+        const port = BASE_PORT + offset;
+        if (port === cached) continue;
+        if (await isEngine(port)) {
+            await chrome.storage.local.set({ [PORT_CACHE_KEY]: port });
+            return port;
+        }
+    }
+    return null;
+}
+
 const SYNC_DOMAINS = ['.youtube.com', '.google.com'];
 const ALARM_NAME = 'gravitydown-cookie-sync';
 const ALARM_PERIOD_MIN = 30;
@@ -46,9 +82,14 @@ async function syncCookies() {
     if (cookies.length === 0) {
         return { ok: false, reason: 'no_cookies' };
     }
+    const port = await resolveBackendPort();
+    if (port === null) {
+        return { ok: false, reason: 'backend_unreachable', message: 'GravityDown no está abierto' };
+    }
+
     let response;
     try {
-        response = await fetch(BACKEND_URL, {
+        response = await fetch(syncUrl(port), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

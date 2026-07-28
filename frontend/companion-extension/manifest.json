@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GravityDown Companion",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Sincroniza las cookies de YouTube con la app GravityDown para sortear el cifrado app-bound de Chrome 127+ y descargar contenido con sesión iniciada.",
   "permissions": [
     "cookies",
@@ -13,7 +13,7 @@
     "https://*.youtube.com/*",
     "https://*.google.com/*",
     "https://*.googlevideo.com/*",
-    "http://127.0.0.1:8765/*"
+    "http://127.0.0.1/*"
   ],
   "background": {
     "service_worker": "background.js"
